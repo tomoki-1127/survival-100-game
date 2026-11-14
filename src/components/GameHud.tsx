@@ -34,13 +34,17 @@ export function GameHud({
   onUsePotion,
   onJoystickMove,
 }: GameHudProps) {
-  const joyAreaRef = useRef<HTMLDivElement | null>(null);
+  const joyRingRef = useRef<HTMLDivElement | null>(null);
   const joyPointerIdRef = useRef<number | null>(null);
   const joyMetricsRef = useRef<{ cx: number; cy: number; maxR: number } | null>(null);
 
-  const skillPointerSkipClickRef = useRef(false);
-  const potionPointerSkipClickRef = useRef(false);
-  const equipPointerSkipClickRef = useRef(false);
+  // Keep latest callbacks in refs so HUD re-renders (15fps) NEVER tear down active pointer listeners
+  const onJoystickMoveRef = useRef(onJoystickMove);
+  onJoystickMoveRef.current = onJoystickMove;
+
+  const lastSkillPointerDownAtRef = useRef(0);
+  const lastPotionPointerDownAtRef = useRef(0);
+  const lastEquipPointerDownAtRef = useRef(0);
 
   const [knobOffset, setKnobOffset] = useState({ x: 0, y: 0 });
   const [joyActive, setJoyActive] = useState(false);
@@ -58,50 +62,48 @@ export function GameHud({
     };
   }, []);
 
-  const updateJoyFromClient = useCallback(
-    (clientX: number, clientY: number) => {
-      let metrics = joyMetricsRef.current;
-      if (!metrics && joyAreaRef.current) {
-        const rect = joyAreaRef.current.getBoundingClientRect();
-        metrics = {
-          cx: rect.left + rect.width / 2,
-          cy: rect.top + rect.height / 2,
-          maxR: Math.max(24, rect.width * 0.36),
-        };
-        joyMetricsRef.current = metrics;
-      }
-      if (!metrics) return;
+  const updateJoyFromClient = useCallback((clientX: number, clientY: number) => {
+    let metrics = joyMetricsRef.current;
+    if (!metrics && joyRingRef.current) {
+      const rect = joyRingRef.current.getBoundingClientRect();
+      metrics = {
+        cx: rect.left + rect.width / 2,
+        cy: rect.top + rect.height / 2,
+        maxR: Math.max(28, rect.width * 0.37),
+      };
+      joyMetricsRef.current = metrics;
+    }
+    if (!metrics) return;
 
-      const rawDx = clientX - metrics.cx;
-      const rawDy = clientY - metrics.cy;
-      const dist = Math.hypot(rawDx, rawDy);
-      const maxR = metrics.maxR;
+    const rawDx = clientX - metrics.cx;
+    const rawDy = clientY - metrics.cy;
+    const dist = Math.hypot(rawDx, rawDy);
+    const maxR = metrics.maxR;
 
-      const clampedDist = Math.min(dist, maxR);
-      const angle = Math.atan2(rawDy, rawDx);
-      const knobX = dist > 0.001 ? Math.cos(angle) * clampedDist : 0;
-      const knobY = dist > 0.001 ? Math.sin(angle) * clampedDist : 0;
-      setKnobOffset({ x: knobX, y: knobY });
+    const clampedDist = Math.min(dist, maxR);
+    const angle = Math.atan2(rawDy, rawDx);
+    const knobX = dist > 0.001 ? Math.cos(angle) * clampedDist : 0;
+    const knobY = dist > 0.001 ? Math.sin(angle) * clampedDist : 0;
+    setKnobOffset({ x: knobX, y: knobY });
 
-      const deadzoneRatio = 0.08;
-      const ratio = dist / maxR;
-      if (ratio <= deadzoneRatio) {
-        onJoystickMove(0, 0, true);
-        return;
-      }
-      const normMag = Math.min(1, (ratio - deadzoneRatio) / (1 - deadzoneRatio));
-      onJoystickMove(Math.cos(angle) * normMag, Math.sin(angle) * normMag, true);
-    },
-    [onJoystickMove]
-  );
+    // Small 4% deadzone so slight thumb movements respond immediately while idle stays crisp
+    const deadzoneRatio = 0.04;
+    const ratio = dist / maxR;
+    if (ratio <= deadzoneRatio) {
+      onJoystickMoveRef.current(0, 0, true);
+      return;
+    }
+    const normMag = Math.min(1, (ratio - deadzoneRatio) / (1 - deadzoneRatio));
+    onJoystickMoveRef.current(Math.cos(angle) * normMag, Math.sin(angle) * normMag, true);
+  }, []);
 
   const resetJoy = useCallback(() => {
     joyPointerIdRef.current = null;
     joyMetricsRef.current = null;
     setJoyActive(false);
     setKnobOffset({ x: 0, y: 0 });
-    onJoystickMove(0, 0, false);
-  }, [onJoystickMove]);
+    onJoystickMoveRef.current(0, 0, false);
+  }, []);
 
   useEffect(() => {
     if (paused && joyPointerIdRef.current !== null) {
@@ -297,24 +299,24 @@ export function GameHud({
       {/* Mobile & Touch Controls: Bottom-Left Analog Joystick + Bottom-Right Vertical Skill Column */}
       {isTouchLayout ? (
         <>
-          {/* Bottom-Left: Virtual Analog Joystick */}
+          {/* Bottom-Left: Generous Hit Pad Wrapping Larger Gold-Trimmed Analog Joystick */}
           <div
-            ref={joyAreaRef}
             onPointerDown={(e) => {
               if (joyPointerIdRef.current !== null) return;
               e.preventDefault();
               e.stopPropagation();
               joyPointerIdRef.current = e.pointerId;
-              const rect = e.currentTarget.getBoundingClientRect();
+              const ringEl = joyRingRef.current ?? e.currentTarget;
+              const rect = ringEl.getBoundingClientRect();
               joyMetricsRef.current = {
                 cx: rect.left + rect.width / 2,
                 cy: rect.top + rect.height / 2,
-                maxR: Math.max(24, rect.width * 0.36),
+                maxR: Math.max(28, rect.width * 0.37),
               };
               try {
                 e.currentTarget.setPointerCapture(e.pointerId);
               } catch {
-                // Fallback window listeners handle tracking
+                // Window listeners handle fallback tracking
               }
               setJoyActive(true);
               updateJoyFromClient(e.clientX, e.clientY);
@@ -333,39 +335,41 @@ export function GameHud({
               if (joyPointerIdRef.current !== e.pointerId) return;
               resetJoy();
             }}
-            onLostPointerCapture={(e) => {
-              if (joyPointerIdRef.current !== e.pointerId) return;
-              resetJoy();
-            }}
             style={{
-              left: "max(0.75rem, env(safe-area-inset-left))",
-              bottom: "max(0.875rem, env(safe-area-inset-bottom))",
+              left: "max(0.375rem, env(safe-area-inset-left))",
+              bottom: "max(0.5rem, env(safe-area-inset-bottom))",
             }}
-            className={`pointer-events-auto combat-touch-surface absolute w-32 h-32 rounded-full flex items-center justify-center transition-shadow ${
-              joyActive
-                ? "bg-[#091020]/78 border-2 border-[#facc15] shadow-[0_0_22px_rgba(250,204,21,0.34),inset_0_0_18px_rgba(0,0,0,0.85)]"
-                : "bg-[#090e1a]/66 border-2 border-[#c89b3c]/80 shadow-[0_6px_18px_rgba(0,0,0,0.65),inset_0_0_16px_rgba(0,0,0,0.8)]"
-            }`}
+            className="pointer-events-auto combat-touch-surface absolute w-42 h-42 flex items-center justify-center rounded-full"
             aria-label="移動用バーチャルアナログジョイスティック"
           >
-            {/* Inner Gold Ring & Cardinal Guides */}
-            <div className="pointer-events-none absolute inset-2.5 rounded-full border border-[#c89b3c]/30" />
-            <div className="pointer-events-none absolute top-1.5 left-1/2 -translate-x-1/2 w-1 h-2 rounded-full bg-[#c89b3c]/45" />
-            <div className="pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-2 rounded-full bg-[#c89b3c]/45" />
-            <div className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 w-2 h-1 rounded-full bg-[#c89b3c]/45" />
-            <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-2 h-1 rounded-full bg-[#c89b3c]/45" />
-
-            {/* Analog Stick Knob */}
+            {/* Outer Dark Navy + Gold Circle (144px) */}
             <div
-              className={`pointer-events-none w-13 h-13 rounded-full border-2 shadow-[0_4px_12px_rgba(0,0,0,0.75)] ${
+              ref={joyRingRef}
+              className={`pointer-events-none relative w-36 h-36 rounded-full flex items-center justify-center transition-shadow ${
                 joyActive
-                  ? "border-[#fef08a] bg-[radial-gradient(circle_at_35%_30%,#fef08a,#d99b26_48%,#131c2e_92%)]"
-                  : "border-[#c89b3c] bg-[radial-gradient(circle_at_35%_30%,#fde68a,#9a6510_48%,#0f172a_92%)] transition-transform duration-100"
+                  ? "bg-[#091020]/78 border-2 border-[#facc15] shadow-[0_0_24px_rgba(250,204,21,0.36),inset_0_0_18px_rgba(0,0,0,0.85)]"
+                  : "bg-[#090e1a]/68 border-2 border-[#c89b3c]/85 shadow-[0_6px_18px_rgba(0,0,0,0.65),inset_0_0_16px_rgba(0,0,0,0.8)]"
               }`}
-              style={{
-                transform: `translate3d(${knobOffset.x}px, ${knobOffset.y}px, 0)`,
-              }}
-            />
+            >
+              {/* Inner Gold Ring & Cardinal Guides */}
+              <div className="pointer-events-none absolute inset-3 rounded-full border border-[#c89b3c]/30" />
+              <div className="pointer-events-none absolute top-1.5 left-1/2 -translate-x-1/2 w-1 h-2.5 rounded-full bg-[#c89b3c]/50" />
+              <div className="pointer-events-none absolute bottom-1.5 left-1/2 -translate-x-1/2 w-1 h-2.5 rounded-full bg-[#c89b3c]/50" />
+              <div className="pointer-events-none absolute left-1.5 top-1/2 -translate-y-1/2 w-2.5 h-1 rounded-full bg-[#c89b3c]/50" />
+              <div className="pointer-events-none absolute right-1.5 top-1/2 -translate-y-1/2 w-2.5 h-1 rounded-full bg-[#c89b3c]/50" />
+
+              {/* Inner Stick Knob (60px) */}
+              <div
+                className={`pointer-events-none w-15 h-15 rounded-full border-2 shadow-[0_4px_14px_rgba(0,0,0,0.78)] ${
+                  joyActive
+                    ? "border-[#fef08a] bg-[radial-gradient(circle_at_35%_30%,#fef08a,#d99b26_48%,#131c2e_92%)]"
+                    : "border-[#c89b3c] bg-[radial-gradient(circle_at_35%_30%,#fde68a,#9a6510_48%,#0f172a_92%)] transition-transform duration-100"
+                }`}
+                style={{
+                  transform: `translate3d(${knobOffset.x}px, ${knobOffset.y}px, 0)`,
+                }}
+              />
+            </div>
           </div>
 
           {/* Bottom-Right: Vertical Skill Column (Large Thumb-Friendly Icons) */}
@@ -382,14 +386,11 @@ export function GameHud({
               onPointerDown={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                equipPointerSkipClickRef.current = true;
+                lastEquipPointerDownAtRef.current = performance.now();
                 onOpenMenu("equip");
               }}
               onClick={() => {
-                if (equipPointerSkipClickRef.current) {
-                  equipPointerSkipClickRef.current = false;
-                  return;
-                }
+                if (performance.now() - lastEquipPointerDownAtRef.current < 400) return;
                 onOpenMenu("equip");
               }}
               aria-label={`装備変更: ${hud.weaponName}`}
@@ -409,14 +410,11 @@ export function GameHud({
                 e.preventDefault();
                 e.stopPropagation();
                 if (!potionReady) return;
-                potionPointerSkipClickRef.current = true;
+                lastPotionPointerDownAtRef.current = performance.now();
                 onUsePotion();
               }}
               onClick={() => {
-                if (potionPointerSkipClickRef.current) {
-                  potionPointerSkipClickRef.current = false;
-                  return;
-                }
+                if (performance.now() - lastPotionPointerDownAtRef.current < 400) return;
                 if (potionReady) onUsePotion();
               }}
               aria-label={`回復薬 残り${hud.potionCharges}個`}
@@ -459,14 +457,11 @@ export function GameHud({
                 e.preventDefault();
                 e.stopPropagation();
                 if (!skillReady) return;
-                skillPointerSkipClickRef.current = true;
+                lastSkillPointerDownAtRef.current = performance.now();
                 onUseSkill();
               }}
               onClick={() => {
-                if (skillPointerSkipClickRef.current) {
-                  skillPointerSkipClickRef.current = false;
-                  return;
-                }
+                if (performance.now() - lastSkillPointerDownAtRef.current < 400) return;
                 if (skillReady) onUseSkill();
               }}
               aria-label={skillReady ? "旋風斬り 使用可能" : `旋風斬り クールダウン残り${Math.ceil(hud.skillCooldown)}秒`}

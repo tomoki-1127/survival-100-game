@@ -182,12 +182,26 @@ export default function App() {
     refreshSave();
   };
 
-  const handleToggleMute = () => {
-    const next = !muted;
-    SoundFX.muted = next;
-    setMuted(next);
-    if (!next) SoundFX.playClick();
-  };
+  const handleToggleMute = useCallback(() => {
+    setMuted((prev) => {
+      const next = !prev;
+      SoundFX.muted = next;
+      if (!next) SoundFX.playClick();
+      return next;
+    });
+  }, []);
+
+  const handleUseSkill = useCallback(() => {
+    engineRef.current?.triggerActiveSkill();
+  }, []);
+
+  const handleUsePotion = useCallback(() => {
+    engineRef.current?.useRecoveryPotion();
+  }, []);
+
+  const handleJoystickMove = useCallback((x: number, y: number, active: boolean) => {
+    engineRef.current?.setJoystick(x, y, active);
+  }, []);
 
   return (
     <div
@@ -220,9 +234,9 @@ export default function App() {
           paused={Boolean(menuTab || levelUpState || deathSummary || showVictory)}
           onToggleMute={handleToggleMute}
           onOpenMenu={handleOpenMenu}
-          onUseSkill={() => engineRef.current?.triggerActiveSkill()}
-          onUsePotion={() => engineRef.current?.useRecoveryPotion()}
-          onJoystickMove={(x, y, active) => engineRef.current?.setJoystick(x, y, active)}
+          onUseSkill={handleUseSkill}
+          onUsePotion={handleUsePotion}
+          onJoystickMove={handleJoystickMove}
         />
       )}
 

@@ -119,9 +119,23 @@ export class GameEngine {
   }
 
   setJoystick(x: number, y: number, active: boolean) {
-    this.joyX = x;
-    this.joyY = y;
-    this.joyActive = active;
+    if (!active) {
+      this.joyX = 0;
+      this.joyY = 0;
+      this.joyActive = false;
+      return;
+    }
+    const sx = Number.isFinite(x) ? x : 0;
+    const sy = Number.isFinite(y) ? y : 0;
+    const mag = Math.hypot(sx, sy);
+    if (mag > 1) {
+      this.joyX = sx / mag;
+      this.joyY = sy / mag;
+    } else {
+      this.joyX = sx;
+      this.joyY = sy;
+    }
+    this.joyActive = true;
   }
 
   startNewRun() {
@@ -770,7 +784,7 @@ export class GameEngine {
     }
 
     const len = Math.hypot(mx, my);
-    if (len > 0.05) {
+    if (len > 0.01) {
       const nx = mx / Math.max(1, len);
       const ny = my / Math.max(1, len);
       p.x += nx * p.moveSpeed * dt;
@@ -778,7 +792,7 @@ export class GameEngine {
       p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x));
       p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y));
       p.facingAngle = Math.atan2(ny, nx);
-      if (Math.abs(nx) > 0.15) {
+      if (Math.abs(nx) > 0.08) {
         p.facingX = nx >= 0 ? 1 : -1;
       }
       p.walkPhase += dt * 11;
