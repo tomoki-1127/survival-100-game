@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 interface PixelSpriteProps {
   src?: string;
@@ -9,6 +9,10 @@ interface PixelSpriteProps {
 
 export function PixelSprite({ src, alt, className = "w-10 h-10", fallbackText = "?" }: PixelSpriteProps) {
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [src]);
 
   if (!src || failed) {
     return (
