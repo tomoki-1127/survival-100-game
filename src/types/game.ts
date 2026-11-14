@@ -129,7 +129,9 @@ export interface PlayerState {
   y: number;
   radius: number;
   facingAngle: number;
+  facingX: number;
   walkPhase: number;
+  attackAnimTimer: number;
   level: number;
   xp: number;
   nextXp: number;
@@ -199,6 +201,8 @@ export interface EnemyEntity {
   } | null;
   hitFlash: number;
   bobPhase: number;
+  facingX: number;
+  attackAnimTimer: number;
 }
 
 export interface CompanionEntity extends CompanionDef {
@@ -208,6 +212,8 @@ export interface CompanionEntity extends CompanionDef {
   atkTimer: number;
   downed: boolean;
   hitFlash: number;
+  facingX: number;
+  attackAnimTimer: number;
 }
 
 export interface ProjectileEntity {
@@ -240,6 +246,18 @@ export interface ParticleEffect {
   vx: number;
   vy: number;
   r: number;
+  color: string;
+  life: number;
+  maxLife: number;
+}
+
+export interface DeathEffect {
+  spriteId: string;
+  isBoss: boolean;
+  x: number;
+  y: number;
+  radius: number;
+  facingX: number;
   color: string;
   life: number;
   maxLife: number;

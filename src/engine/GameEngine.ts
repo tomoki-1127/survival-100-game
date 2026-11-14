@@ -1,8 +1,10 @@
+import { preloadCoreGameAssets } from "../data/assets";
 import { getEquipmentById } from "../data/equipment";
 import { getAreaForDay, MONSTERS_DB } from "../data/monsters";
 import { COMPANION_CLASSES, LEVEL_UP_PERKS } from "../data/upgrades";
 import type {
   CompanionEntity,
+  DeathEffect,
   EnemyEntity,
   FloatingText,
   GroundProp,
@@ -61,6 +63,7 @@ export class GameEngine {
   projectiles: ProjectileEntity[] = [];
   slashEffects: SlashEffect[] = [];
   particles: ParticleEffect[] = [];
+  deathEffects: DeathEffect[] = [];
   floatingTexts: FloatingText[] = [];
   groundProps: GroundProp[] = [];
   camera = { x: ARENA_SIZE / 2, y: ARENA_SIZE / 2 };
@@ -76,6 +79,7 @@ export class GameEngine {
     if (!ctx) throw new Error("Canvas 2D context unavailable");
     this.ctx = ctx;
     this.callbacks = callbacks;
+    preloadCoreGameAssets();
   }
 
   startLoop() {
@@ -139,6 +143,7 @@ export class GameEngine {
     this.projectiles = [];
     this.slashEffects = [];
     this.particles = [];
+    this.deathEffects = [];
     this.floatingTexts = [];
 
     this.player = this.createPlayerObject();
@@ -170,7 +175,9 @@ export class GameEngine {
       y: ARENA_SIZE / 2,
       radius: 17,
       facingAngle: 0,
+      facingX: 1,
       walkPhase: 0,
+      attackAnimTimer: 0,
       level: 1,
       xp: 0,
       nextXp: 40,
@@ -277,6 +284,8 @@ export class GameEngine {
         atkTimer: 0,
         downed: false,
         hitFlash: 0,
+        facingX: 1,
+        attackAnimTimer: 0,
       });
     }
   }
@@ -285,7 +294,8 @@ export class GameEngine {
     const hpMult = 1 + (day - 1) * 0.16 + Math.pow(Math.max(0, day - 20), 1.32) * 0.025;
     const atkMult = 1 + (day - 1) * 0.1 + Math.max(0, day - 30) * 0.035;
     const rewardMult = 1 + (day - 1) * 0.08;
-    return { hpMult, atkMult, rewardMult };
+    const coinMult = 1 + (day - 1) * 0.14 + Math.pow(Math.max(0, day - 10), 1.52) * 0.35;
+    return { hpMult, atkMult, rewardMult, coinMult };
   }
 
   private spawnEnemy(typeId: string) {
@@ -319,7 +329,7 @@ export class GameEngine {
       def: defStat,
       speed: def.speed + Math.min(45, this.day * 0.4),
       xp: Math.round(def.xp * scale.rewardMult),
-      coins: Math.round(def.coins * scale.rewardMult),
+      coins: Math.max(1, Math.round(def.coins * scale.coinMult)),
       color: def.color,
       attackRange: def.attackRange,
       atkCd: def.atkCd,
@@ -328,6 +338,8 @@ export class GameEngine {
       telegraph: null,
       hitFlash: 0,
       bobPhase: Math.random() * 6,
+      facingX: x >= this.player.x ? -1 : 1,
+      attackAnimTimer: 0,
     });
   }
 
@@ -394,6 +406,19 @@ export class GameEngine {
     if (!p) return;
     SoundFX.playKill();
     this.spawnParticles(enemy.x, enemy.y, enemy.color, enemy.isBoss ? 26 : 9);
+    if (this.deathEffects.length < 40) {
+      this.deathEffects.push({
+        spriteId: enemy.id,
+        isBoss: enemy.isBoss,
+        x: enemy.x,
+        y: enemy.y,
+        radius: enemy.radius,
+        facingX: enemy.facingX,
+        color: enemy.color,
+        life: enemy.isBoss ? 0.55 : 0.32,
+        maxLife: enemy.isBoss ? 0.55 : 0.32,
+      });
+    }
 
     const coinMult = 1 + SaveManager.data.permUpgrades.coinBonus * 0.1;
     const gainedCoins = Math.max(1, Math.round(enemy.coins * coinMult));
@@ -468,6 +493,10 @@ export class GameEngine {
 
     const angle = Math.atan2(nearest.y - p.y, nearest.x - p.x);
     p.facingAngle = angle;
+    if (Math.abs(Math.cos(angle)) > 0.15) {
+      p.facingX = Math.cos(angle) >= 0 ? 1 : -1;
+    }
+    p.attackAnimTimer = 0.22;
 
     const style = p.attackStyle;
     if (style === "arrow" || style === "magic") {
@@ -566,6 +595,7 @@ export class GameEngine {
     if (this.mode !== "playing" || this.paused || this.skillCooldown > 0 || !this.player) return;
     const p = this.player;
     this.skillCooldown = this.skillMaxCd;
+    p.attackAnimTimer = 0.28;
     SoundFX.playSkill();
 
     const radius = Math.max(145, p.range * 1.35);
@@ -713,6 +743,7 @@ export class GameEngine {
     if (this.potionCd > 0) this.potionCd = Math.max(0, this.potionCd - dt);
     if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - dt);
     if (p.hitFlash > 0) p.hitFlash = Math.max(0, p.hitFlash - dt);
+    if (p.attackAnimTimer > 0) p.attackAnimTimer = Math.max(0, p.attackAnimTimer - dt);
 
     this.lastSaveTick += dt;
     if (this.lastSaveTick >= 5) {
@@ -741,6 +772,9 @@ export class GameEngine {
       p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x));
       p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y));
       p.facingAngle = Math.atan2(ny, nx);
+      if (Math.abs(nx) > 0.15) {
+        p.facingX = nx >= 0 ? 1 : -1;
+      }
       p.walkPhase += dt * 11;
     }
 
@@ -790,6 +824,7 @@ export class GameEngine {
     for (const c of this.companions) {
       if (c.downed) continue;
       if (c.hitFlash > 0) c.hitFlash -= dt;
+      if (c.attackAnimTimer > 0) c.attackAnimTimer = Math.max(0, c.attackAnimTimer - dt);
       c.atkTimer -= dt;
 
       if (c.role === "僧侶") {
@@ -798,9 +833,11 @@ export class GameEngine {
           const a = Math.atan2(p.y - c.y, p.x - c.x);
           c.x += Math.cos(a) * c.speed * dt;
           c.y += Math.sin(a) * c.speed * dt;
+          if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
         }
         if (c.atkTimer <= 0 && p.hp < p.maxHp) {
           c.atkTimer = c.cd;
+          c.attackAnimTimer = 0.25;
           const heal = Math.round(p.maxHp * 0.08 + 12);
           p.hp = Math.min(p.maxHp, p.hp + heal);
           this.spawnFloatingText(p.x, p.y - 24, `+${heal}`, "#f472b6", 13);
@@ -819,17 +856,21 @@ export class GameEngine {
           const a = Math.atan2(target.y - c.y, target.x - c.x);
           c.x += Math.cos(a) * c.speed * dt;
           c.y += Math.sin(a) * c.speed * dt;
+          if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
         } else if (!target) {
           const distP = Math.hypot(p.x - c.x, p.y - c.y);
           if (distP > 85) {
             const a = Math.atan2(p.y - c.y, p.x - c.x);
             c.x += Math.cos(a) * c.speed * dt;
             c.y += Math.sin(a) * c.speed * dt;
+            if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
           }
         }
         if (target && best <= c.range + target.radius && c.atkTimer <= 0) {
           c.atkTimer = c.cd;
+          c.attackAnimTimer = 0.22;
           const a = Math.atan2(target.y - c.y, target.x - c.x);
+          if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
           if (c.role === "弓使い" || c.role === "魔法使い") {
             this.projectiles.push({
               fromPlayer: true,
@@ -854,6 +895,7 @@ export class GameEngine {
     for (const e of this.enemies) {
       if (e.hp <= 0) continue;
       if (e.hitFlash > 0) e.hitFlash -= dt;
+      if (e.attackAnimTimer > 0) e.attackAnimTimer = Math.max(0, e.attackAnimTimer - dt);
       e.bobPhase += dt * 7;
 
       let targetObj: { x: number; y: number; radius: number } = p;
@@ -874,6 +916,9 @@ export class GameEngine {
       const dist = Math.hypot(dx, dy) || 1;
       const nx = dx / dist;
       const ny = dy / dist;
+      if (Math.abs(nx) > 0.12) {
+        e.facingX = nx >= 0 ? 1 : -1;
+      }
 
       if (e.isBoss) {
         e.specialTimer -= dt;
@@ -889,6 +934,7 @@ export class GameEngine {
           }
         } else if (e.specialTimer <= 0) {
           e.specialTimer = e.isFinalBoss ? 2.8 : 3.8;
+          e.attackAnimTimer = 0.3;
           e.telegraph = { x: p.x, y: p.y, radius: 68, timer: 0.95, maxTimer: 0.95 };
           const count = e.isFinalBoss ? 10 : 6;
           for (let i = 0; i < count; i++) {
@@ -918,6 +964,7 @@ export class GameEngine {
       e.atkTimer -= dt;
       if (dist <= e.attackRange + targetObj.radius && e.atkTimer <= 0) {
         e.atkTimer = e.atkCd;
+        e.attackAnimTimer = 0.2;
         if (e.shoots && dist > e.radius + targetObj.radius + 15) {
           this.projectiles.push({
             fromPlayer: false,
@@ -1020,6 +1067,11 @@ export class GameEngine {
     }
     this.particles = this.particles.filter((pt) => pt.life > 0);
 
+    for (const de of this.deathEffects) {
+      de.life -= dt;
+    }
+    this.deathEffects = this.deathEffects.filter((de) => de.life > 0);
+
     for (const ft of this.floatingTexts) {
       ft.y -= 32 * dt;
       ft.life -= dt;
@@ -1083,12 +1135,14 @@ export class GameEngine {
     renderWorld(this.ctx, this.canvas.width, this.canvas.height, {
       arenaSize: ARENA_SIZE,
       day: this.day,
+      elapsedTotal: this.elapsedTotal,
       player: this.mode === "playing" ? this.player : null,
       enemies: this.enemies,
       companions: this.companions,
       projectiles: this.projectiles,
       slashEffects: this.slashEffects,
       particles: this.particles,
+      deathEffects: this.deathEffects,
       floatingTexts: this.floatingTexts,
       groundProps: this.groundProps,
       camera: this.camera,

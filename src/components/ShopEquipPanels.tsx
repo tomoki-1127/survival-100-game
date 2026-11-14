@@ -1,10 +1,17 @@
-import { useState } from "react";
+import { Coins } from "lucide-react";
+import { useRef, useState } from "react";
+import {
+  COMPANION_SPRITE_MAP,
+  EQUIPMENT_ICON_MAP,
+  MONSTER_SPRITE_MAP,
+} from "../data/assets";
 import {
   CATEGORY_TO_SLOT,
   EQUIP_CATEGORIES,
   EQUIPMENT_DB,
   getEquipmentById,
   RARITY_COLOR_CLASS,
+  RARITY_FRAME_CLASS,
   SLOT_LABELS,
 } from "../data/equipment";
 import { MONSTERS_DB } from "../data/monsters";
@@ -14,10 +21,14 @@ import {
   evaluateAchievements,
   formatItemStats,
   getBaseHubStats,
+  getEquipmentPrice,
   getPermUpgradeCost,
+  purchaseEquipmentAtomic,
+  purchasePermUpgradeAtomic,
   SaveManager,
 } from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
+import { PixelSprite } from "./PixelSprite";
 
 interface PanelProps {
   save: SaveData;
@@ -28,6 +39,7 @@ interface PanelProps {
 
 export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast }: PanelProps) {
   const [selectedCat, setSelectedCat] = useState<"すべて" | EquipCategory>("すべて");
+  const lockRef = useRef(false);
 
   const filtered =
     selectedCat === "すべて"
@@ -35,26 +47,28 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
       : EQUIPMENT_DB.filter((item) => item.category === selectedCat);
 
   const handleBuy = (itemId: string) => {
-    const item = getEquipmentById(itemId);
-    if (!item) return;
-    if (SaveManager.data.ownedEquipment.includes(item.id)) return;
-    if (SaveManager.data.coins < item.price) return;
-
-    SoundFX.playClick();
-    SaveManager.data.coins -= item.price;
-    SaveManager.data.ownedEquipment.push(item.id);
-    const slot = CATEGORY_TO_SLOT[item.category];
-    SaveManager.data.equipped[slot] = item.id;
-    SaveManager.save();
-    evaluateAchievements((name) => onToast(`実績解除: ${name}`));
-    onEquipChanged?.();
-    onDataChange();
-    onToast(`${item.name}を購入・装備しました`);
+    if (lockRef.current) return;
+    lockRef.current = true;
+    try {
+      const res = purchaseEquipmentAtomic(itemId);
+      if (!res.ok) {
+        onToast(res.reason);
+        return;
+      }
+      SoundFX.playClick();
+      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      onEquipChanged?.();
+      onDataChange();
+      onToast(`${res.item.name}を購入・装備しました`);
+    } finally {
+      lockRef.current = false;
+    }
   };
 
   const handleEquip = (itemId: string) => {
     const item = getEquipmentById(itemId);
     if (!item) return;
+    if (!SaveManager.data.ownedEquipment.includes(item.id)) return;
     SoundFX.playClick();
     const slot = CATEGORY_TO_SLOT[item.category];
     SaveManager.data.equipped[slot] = item.id;
@@ -77,10 +91,10 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
                 SoundFX.playClick();
                 setSelectedCat(cat);
               }}
-              className={`px-3 py-1.5 rounded-md text-xs font-semibold whitespace-nowrap shrink-0 transition-colors border ${
+              className={`px-3 py-1.5 rounded-md text-xs font-bold whitespace-nowrap shrink-0 transition-colors border cursor-pointer ${
                 active
-                  ? "bg-amber-500/20 text-amber-300 border-amber-500/60"
-                  : "bg-slate-800/70 text-slate-300 border-slate-700 hover:bg-slate-700/70"
+                  ? "bg-amber-500/20 text-amber-300 border-[#c89b3c]"
+                  : "bg-slate-900/80 text-slate-300 border-slate-700 hover:bg-slate-800"
               }`}
             >
               {cat}
@@ -94,30 +108,44 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
           const owned = save.ownedEquipment.includes(item.id);
           const slot = CATEGORY_TO_SLOT[item.category];
           const equipped = save.equipped[slot] === item.id;
-          const canAfford = save.coins >= item.price;
+          const price = getEquipmentPrice(item);
+          const canAfford = save.coins >= price;
           const statText = formatItemStats(item.stats);
 
           return (
             <div
               key={item.id}
-              className="flex flex-col justify-between gap-3 p-3.5 rounded-lg bg-slate-900/80 border border-slate-800"
+              className={`df-card flex flex-col justify-between gap-3 p-3.5 rounded-lg border ${RARITY_FRAME_CLASS[item.rarity]}`}
             >
-              <div className="space-y-1.5">
-                <div className="flex items-baseline justify-between gap-2">
-                  <h4 className={`font-bold text-sm ${RARITY_COLOR_CLASS[item.rarity]}`}>
-                    {item.name}
-                  </h4>
-                  <span className="text-xs text-slate-400 whitespace-nowrap shrink-0">
-                    {item.category}
-                  </span>
+              <div className="flex items-start gap-3">
+                <div
+                  className={`w-14 h-14 shrink-0 rounded-md bg-slate-950/90 border flex items-center justify-center p-1 ${RARITY_FRAME_CLASS[item.rarity]}`}
+                >
+                  <PixelSprite
+                    src={EQUIPMENT_ICON_MAP[item.id]}
+                    alt={item.name}
+                    className="w-11 h-11"
+                    fallbackText={item.category[0]}
+                  />
                 </div>
-                <div className="text-xs text-slate-400 flex items-center gap-1.5">
-                  <span className={RARITY_COLOR_CLASS[item.rarity]}>{item.rarity}</span>
-                  <span aria-hidden="true">·</span>
-                  <span>{SLOT_LABELS[slot]}枠</span>
+
+                <div className="flex-1 min-w-0 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h4 className={`font-bold text-sm truncate ${RARITY_COLOR_CLASS[item.rarity]}`}>
+                      {item.name}
+                    </h4>
+                    <span className="text-[11px] text-slate-400 whitespace-nowrap shrink-0">
+                      {item.category}
+                    </span>
+                  </div>
+                  <div className="text-[11px] text-slate-400 flex items-center gap-1.5">
+                    <span className={RARITY_COLOR_CLASS[item.rarity]}>{item.rarity}</span>
+                    <span aria-hidden="true">·</span>
+                    <span>{SLOT_LABELS[slot]}枠</span>
+                  </div>
+                  {statText && <p className="text-xs font-semibold text-emerald-300">{statText}</p>}
+                  <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
                 </div>
-                {statText && <p className="text-xs font-medium text-emerald-300">{statText}</p>}
-                <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
               </div>
 
               {owned ? (
@@ -127,8 +155,8 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
                   disabled={equipped}
                   className={`w-full py-2 px-3 rounded-md text-xs font-bold transition-colors whitespace-nowrap ${
                     equipped
-                      ? "bg-emerald-700/60 text-emerald-200 border border-emerald-500/50 cursor-default"
-                      : "bg-slate-800 text-slate-100 border border-slate-600 hover:bg-slate-700 cursor-pointer"
+                      ? "bg-emerald-800/60 text-emerald-200 border border-emerald-500/60 cursor-default"
+                      : "bg-slate-800 text-amber-100 border border-[#8f6b24] hover:bg-slate-700 cursor-pointer"
                   }`}
                 >
                   {equipped ? "購入済み · 装備中" : "購入済み · 装備する"}
@@ -138,13 +166,14 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
                   type="button"
                   onClick={() => handleBuy(item.id)}
                   disabled={!canAfford}
-                  className={`w-full py-2 px-3 rounded-md text-xs font-bold transition-colors whitespace-nowrap font-mono-num ${
+                  className={`w-full py-2 px-3 rounded-md text-xs font-bold transition-colors whitespace-nowrap font-mono-num inline-flex items-center justify-center gap-1.5 ${
                     canAfford
-                      ? "bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
-                      : "bg-slate-800/60 text-slate-500 border border-slate-800 cursor-not-allowed"
+                      ? "df-gold-btn text-slate-950 cursor-pointer"
+                      : "bg-slate-900/70 text-slate-500 border border-slate-800 cursor-not-allowed"
                   }`}
                 >
-                  {item.price.toLocaleString()} コインで購入
+                  <Coins className={`w-3.5 h-3.5 ${canAfford ? "text-amber-950" : "text-slate-600"}`} />
+                  {price.toLocaleString()} G で購入
                 </button>
               )}
             </div>
@@ -156,21 +185,24 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
 }
 
 export function PermanentUpgradePanel({ save, onDataChange, onToast }: PanelProps) {
-  const handleUpgrade = (upId: (typeof PERM_UPGRADES_DB)[number]["id"]) => {
-    const up = PERM_UPGRADES_DB.find((u) => u.id === upId);
-    if (!up) return;
-    const lv = SaveManager.data.permUpgrades[up.id] || 0;
-    if (lv >= up.maxLv) return;
-    const cost = getPermUpgradeCost(up, lv);
-    if (SaveManager.data.coins < cost) return;
+  const lockRef = useRef(false);
 
-    SoundFX.playLevelUp();
-    SaveManager.data.coins -= cost;
-    SaveManager.data.permUpgrades[up.id] = lv + 1;
-    SaveManager.save();
-    evaluateAchievements((name) => onToast(`実績解除: ${name}`));
-    onDataChange();
-    onToast(`${up.name}を Lv.${lv + 1} に強化しました`);
+  const handleUpgrade = (upId: (typeof PERM_UPGRADES_DB)[number]["id"]) => {
+    if (lockRef.current) return;
+    lockRef.current = true;
+    try {
+      const res = purchasePermUpgradeAtomic(upId);
+      if (!res.ok) {
+        onToast(res.reason);
+        return;
+      }
+      SoundFX.playLevelUp();
+      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      onDataChange();
+      onToast(`${res.up.name}を Lv.${res.newLevel} に強化しました`);
+    } finally {
+      lockRef.current = false;
+    }
   };
 
   return (
@@ -190,16 +222,16 @@ export function PermanentUpgradePanel({ save, onDataChange, onToast }: PanelProp
           return (
             <div
               key={up.id}
-              className="flex flex-col justify-between gap-3 p-3.5 rounded-lg bg-slate-900/80 border border-slate-800"
+              className="df-card flex flex-col justify-between gap-3 p-3.5 rounded-lg border border-[#8f6b24]/70"
             >
               <div className="space-y-1.5">
                 <div className="flex items-baseline justify-between gap-2">
-                  <h4 className="font-bold text-sm text-slate-100">{up.name}</h4>
-                  <span className="text-xs font-mono-num text-amber-300">
+                  <h4 className="font-bold text-sm text-amber-100">{up.name}</h4>
+                  <span className="text-xs font-mono-num text-amber-300 font-bold">
                     Lv.{lv} / {up.maxLv}
                   </span>
                 </div>
-                <p className="text-xs text-emerald-300 font-medium font-mono-num">
+                <p className="text-xs text-emerald-300 font-semibold font-mono-num">
                   現在効果: +{bonusVal}
                   {up.unit}
                 </p>
@@ -210,15 +242,18 @@ export function PermanentUpgradePanel({ save, onDataChange, onToast }: PanelProp
                 type="button"
                 onClick={() => handleUpgrade(up.id)}
                 disabled={!canAfford}
-                className={`w-full py-2 px-3 rounded-md text-xs font-bold transition-colors whitespace-nowrap font-mono-num ${
+                className={`w-full py-2 px-3 rounded-md text-xs font-bold transition-colors whitespace-nowrap font-mono-num inline-flex items-center justify-center gap-1.5 ${
                   isMax
                     ? "bg-emerald-900/40 text-emerald-300 border border-emerald-700/50 cursor-default"
                     : canAfford
-                      ? "bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
-                      : "bg-slate-800/60 text-slate-500 border border-slate-800 cursor-not-allowed"
+                      ? "df-gold-btn text-slate-950 cursor-pointer"
+                      : "bg-slate-900/70 text-slate-500 border border-slate-800 cursor-not-allowed"
                 }`}
               >
-                {isMax ? "最大強化済み" : `${cost.toLocaleString()} コインで強化`}
+                {!isMax && (
+                  <Coins className={`w-3.5 h-3.5 ${canAfford ? "text-amber-950" : "text-slate-600"}`} />
+                )}
+                {isMax ? "最大強化済み" : `${cost.toLocaleString()} G で強化`}
               </button>
             </div>
           );
@@ -232,6 +267,7 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
   const handleEquip = (itemId: string) => {
     const item = getEquipmentById(itemId);
     if (!item) return;
+    if (!SaveManager.data.ownedEquipment.includes(item.id)) return;
     SoundFX.playClick();
     const slot = CATEGORY_TO_SLOT[item.category];
     SaveManager.data.equipped[slot] = item.id;
@@ -242,7 +278,7 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
   };
 
   const handleUnequip = (slot: EquipSlot) => {
-    if (slot === "weapon") return; // 武器は最低1つ装備維持
+    if (slot === "weapon") return;
     SoundFX.playClick();
     SaveManager.data.equipped[slot] = null;
     SaveManager.save();
@@ -254,34 +290,48 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
   return (
     <div className="space-y-5">
       <div>
-        <h3 className="text-sm font-bold text-slate-200 mb-2.5">現在の装備スロット</h3>
+        <h3 className="text-sm font-bold text-amber-200 mb-2.5">現在の装備スロット</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2.5">
           {(Object.entries(SLOT_LABELS) as Array<[EquipSlot, string]>).map(([slotKey, label]) => {
             const item = getEquipmentById(save.equipped[slotKey]);
             return (
               <div
                 key={slotKey}
-                className="p-3 rounded-lg bg-slate-900/90 border border-slate-800 flex flex-col justify-between gap-2"
+                className={`p-3 rounded-lg bg-slate-950/90 border flex items-center gap-2.5 ${
+                  item ? RARITY_FRAME_CLASS[item.rarity] : "border-slate-800"
+                }`}
               >
-                <div>
-                  <div className="text-[11px] text-slate-400 mb-0.5">{label}</div>
+                <div className="w-10 h-10 shrink-0 rounded bg-slate-900 border border-slate-700/80 flex items-center justify-center">
                   {item ? (
-                    <div className={`text-xs font-bold ${RARITY_COLOR_CLASS[item.rarity]}`}>
+                    <PixelSprite
+                      src={EQUIPMENT_ICON_MAP[item.id]}
+                      alt={item.name}
+                      className="w-8 h-8"
+                      fallbackText={label[0]}
+                    />
+                  ) : (
+                    <span className="text-[10px] text-slate-600">空</span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <div className="text-[11px] text-slate-400">{label}</div>
+                  {item ? (
+                    <div className={`text-xs font-bold truncate ${RARITY_COLOR_CLASS[item.rarity]}`}>
                       {item.name}
                     </div>
                   ) : (
                     <div className="text-xs text-slate-500">未装備</div>
                   )}
+                  {item && slotKey !== "weapon" && (
+                    <button
+                      type="button"
+                      onClick={() => handleUnequip(slotKey)}
+                      className="text-[11px] text-slate-400 hover:text-amber-300 mt-0.5 cursor-pointer"
+                    >
+                      外す
+                    </button>
+                  )}
                 </div>
-                {item && slotKey !== "weapon" && (
-                  <button
-                    type="button"
-                    onClick={() => handleUnequip(slotKey)}
-                    className="text-[11px] text-slate-400 hover:text-slate-200 text-left cursor-pointer"
-                  >
-                    外す
-                  </button>
-                )}
               </div>
             );
           })}
@@ -289,7 +339,7 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
       </div>
 
       <div>
-        <h3 className="text-sm font-bold text-slate-200 mb-2.5">
+        <h3 className="text-sm font-bold text-amber-200 mb-2.5">
           所持している装備 ({save.ownedEquipment.length}種)
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -301,16 +351,26 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
             return (
               <div
                 key={item.id}
-                className="flex flex-col justify-between gap-2.5 p-3.5 rounded-lg bg-slate-900/80 border border-slate-800"
+                className={`df-card flex flex-col justify-between gap-2.5 p-3.5 rounded-lg border ${RARITY_FRAME_CLASS[item.rarity]}`}
               >
-                <div className="space-y-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <h4 className={`font-bold text-sm ${RARITY_COLOR_CLASS[item.rarity]}`}>
-                      {item.name}
-                    </h4>
-                    <span className="text-xs text-slate-400">{item.category}</span>
+                <div className="flex items-start gap-3">
+                  <div className="w-12 h-12 shrink-0 rounded bg-slate-950 border border-slate-700/80 flex items-center justify-center">
+                    <PixelSprite
+                      src={EQUIPMENT_ICON_MAP[item.id]}
+                      alt={item.name}
+                      className="w-10 h-10"
+                      fallbackText={item.category[0]}
+                    />
                   </div>
-                  <p className="text-xs text-emerald-300">{formatItemStats(item.stats)}</p>
+                  <div className="min-w-0 flex-1 space-y-1">
+                    <div className="flex items-baseline justify-between gap-2">
+                      <h4 className={`font-bold text-sm truncate ${RARITY_COLOR_CLASS[item.rarity]}`}>
+                        {item.name}
+                      </h4>
+                      <span className="text-xs text-slate-400 shrink-0">{item.category}</span>
+                    </div>
+                    <p className="text-xs text-emerald-300">{formatItemStats(item.stats)}</p>
+                  </div>
                 </div>
                 <button
                   type="button"
@@ -318,8 +378,8 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
                   disabled={isEquipped}
                   className={`w-full py-1.5 px-3 rounded-md text-xs font-bold whitespace-nowrap transition-colors ${
                     isEquipped
-                      ? "bg-emerald-700/60 text-emerald-200 border border-emerald-500/50 cursor-default"
-                      : "bg-amber-600 hover:bg-amber-500 text-white cursor-pointer"
+                      ? "bg-emerald-800/60 text-emerald-200 border border-emerald-500/60 cursor-default"
+                      : "df-gold-btn text-slate-950 cursor-pointer"
                   }`}
                 >
                   {isEquipped ? "装備中" : "装備する"}
@@ -357,23 +417,23 @@ export function RecordsBestiaryPanel({
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
-        <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+        <div className="df-card p-3 rounded-lg border border-[#8f6b24]/60">
           <div className="text-xs text-slate-400">最高到達日数</div>
-          <div className="text-lg font-bold text-amber-400 font-mono-num">{save.bestDay}日</div>
+          <div className="text-lg font-bold text-amber-300 font-mono-num">{save.bestDay}日</div>
         </div>
-        <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+        <div className="df-card p-3 rounded-lg border border-slate-700/80">
           <div className="text-xs text-slate-400">累計討伐数</div>
           <div className="text-lg font-bold text-slate-100 font-mono-num">
             {save.stats.totalKills.toLocaleString()}体
           </div>
         </div>
-        <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+        <div className="df-card p-3 rounded-lg border border-slate-700/80">
           <div className="text-xs text-slate-400">冒険回数</div>
           <div className="text-lg font-bold text-slate-100 font-mono-num">
             {save.stats.totalRuns}回
           </div>
         </div>
-        <div className="p-3 rounded-lg bg-slate-900/80 border border-slate-800">
+        <div className="df-card p-3 rounded-lg border border-slate-700/80">
           <div className="text-xs text-slate-400">コイン獲得倍率</div>
           <div className="text-lg font-bold text-emerald-400 font-mono-num">
             {Math.round(base.coinMult * 100)}%
@@ -382,7 +442,7 @@ export function RecordsBestiaryPanel({
       </div>
 
       <div>
-        <h3 className="text-sm font-bold text-slate-200 mb-2.5">モンスター図鑑</h3>
+        <h3 className="text-sm font-bold text-amber-200 mb-2.5">モンスター図鑑</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {Object.values(MONSTERS_DB).map((m) => {
             const kills = save.bestiary[m.id] || 0;
@@ -390,23 +450,33 @@ export function RecordsBestiaryPanel({
             return (
               <div
                 key={m.id}
-                className="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1.5"
+                className="df-card p-3.5 rounded-lg border border-slate-700/80 flex items-start gap-3"
               >
-                <div className="flex items-baseline justify-between gap-2">
-                  <h4
-                    className="font-bold text-sm"
-                    style={{ color: discovered ? m.color : "#64748b" }}
-                  >
-                    {discovered ? m.name : "？？？"}
-                  </h4>
-                  <span className="text-xs text-slate-400">{m.type}</span>
+                <div className="w-14 h-14 shrink-0 rounded-md bg-slate-950 border border-slate-800 flex items-center justify-center p-1">
+                  <PixelSprite
+                    src={MONSTER_SPRITE_MAP[m.id]}
+                    alt={discovered ? m.name : "未発見"}
+                    className={`w-12 h-12 ${discovered ? "" : "brightness-0 opacity-35"}`}
+                    fallbackText="?"
+                  />
                 </div>
-                <div className="text-xs text-slate-300 font-mono-num">
-                  討伐数: {kills.toLocaleString()} · 初出: {m.minDay}日目〜
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h4
+                      className="font-bold text-sm truncate"
+                      style={{ color: discovered ? m.color : "#64748b" }}
+                    >
+                      {discovered ? m.name : "？？？"}
+                    </h4>
+                    <span className="text-xs text-slate-400 shrink-0">{m.type}</span>
+                  </div>
+                  <div className="text-xs text-slate-300 font-mono-num">
+                    討伐数: {kills.toLocaleString()} · 初出: {m.minDay}日目〜
+                  </div>
+                  <p className="text-xs text-slate-400">
+                    {discovered ? m.desc : "未遭遇のモンスター。冒険を進めて発見しよう。"}
+                  </p>
                 </div>
-                <p className="text-xs text-slate-400">
-                  {discovered ? m.desc : "未遭遇のモンスター。冒険を進めて発見しよう。"}
-                </p>
               </div>
             );
           })}
@@ -414,7 +484,7 @@ export function RecordsBestiaryPanel({
       </div>
 
       <div>
-        <h3 className="text-sm font-bold text-slate-200 mb-2.5">
+        <h3 className="text-sm font-bold text-amber-200 mb-2.5">
           仲間解放状況（150日目以降 · 50日ごとに救出）
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -423,18 +493,30 @@ export function RecordsBestiaryPanel({
             return (
               <div
                 key={c.id}
-                className="p-3.5 rounded-lg bg-slate-900/80 border border-slate-800 space-y-1"
+                className={`df-card p-3.5 rounded-lg border flex items-start gap-3 ${
+                  unlocked ? "border-[#c89b3c]/70" : "border-slate-800"
+                }`}
               >
-                <div className="flex items-baseline justify-between">
-                  <h4
-                    className="font-bold text-sm"
-                    style={{ color: unlocked ? c.color : "#94a3b8" }}
-                  >
-                    {unlocked ? c.name : `${c.role}（未救出）`}
-                  </h4>
-                  <span className="text-xs text-slate-400 font-mono-num">{c.unlockDay}日目〜</span>
+                <div className="w-13 h-13 shrink-0 rounded-md bg-slate-950 border border-slate-800 flex items-center justify-center p-1">
+                  <PixelSprite
+                    src={COMPANION_SPRITE_MAP[c.id]}
+                    alt={c.name}
+                    className={`w-11 h-11 ${unlocked ? "" : "grayscale opacity-45"}`}
+                    fallbackText={c.role[0]}
+                  />
                 </div>
-                <p className="text-xs text-slate-400">{c.desc}</p>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h4
+                      className="font-bold text-sm truncate"
+                      style={{ color: unlocked ? c.color : "#94a3b8" }}
+                    >
+                      {unlocked ? c.name : `${c.role}（未救出）`}
+                    </h4>
+                    <span className="text-xs text-slate-400 font-mono-num shrink-0">{c.unlockDay}日目〜</span>
+                  </div>
+                  <p className="text-xs text-slate-400">{c.desc}</p>
+                </div>
               </div>
             );
           })}
@@ -442,7 +524,7 @@ export function RecordsBestiaryPanel({
       </div>
 
       <div>
-        <h3 className="text-sm font-bold text-slate-200 mb-2.5">
+        <h3 className="text-sm font-bold text-amber-200 mb-2.5">
           実績 ({save.achievements.length} / {ACHIEVEMENTS_DB.length})
         </h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
@@ -451,8 +533,8 @@ export function RecordsBestiaryPanel({
             return (
               <div
                 key={ach.id}
-                className={`p-3.5 rounded-lg bg-slate-900/80 border space-y-1 ${
-                  done ? "border-amber-500/50" : "border-slate-800"
+                className={`df-card p-3.5 rounded-lg border space-y-1 ${
+                  done ? "border-[#c89b3c]" : "border-slate-800"
                 }`}
               >
                 <div className="flex items-baseline justify-between gap-2">

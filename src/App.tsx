@@ -268,7 +268,7 @@ export default function App() {
         {toasts.map((t) => (
           <div
             key={t.id}
-            className="animate-toast px-4 py-2 rounded-lg bg-slate-950/95 border border-amber-500/60 text-center text-xs sm:text-sm font-bold text-slate-100 shadow-lg"
+            className="animate-toast df-panel px-4 py-2 rounded-lg text-center text-xs sm:text-sm font-bold text-amber-100"
           >
             {t.text}
           </div>
