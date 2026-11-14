@@ -1,0 +1,2857 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>SURVIVAL 100 - v0.1</title>
+  <style>
+    :root {
+      --bg-dark: #0d1018;
+      --panel-bg: rgba(18, 23, 36, 0.94);
+      --panel-border: #334155;
+      --gold: #f5b942;
+      --hp: #ef4444;
+      --xp: #38bdf8;
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --rarity-normal: #cbd5e1;
+      --rarity-rare: #38bdf8;
+      --rarity-epic: #c084fc;
+      --rarity-legendary: #fbbf24;
+    }
+
+    * {
+      box-sizing: border-box;
+      user-select: none;
+      -webkit-user-select: none;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-dark);
+      color: var(--text);
+      font-family: system-ui, -apple-system, "Hiragino Kaku Gothic ProN", "Yu Gothic", "Meiryo", sans-serif;
+    }
+
+    #app {
+      position: relative;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+    }
+
+    /* Canvas */
+    #gameCanvas {
+      display: block;
+      width: 100%;
+      height: 100%;
+      touch-action: none;
+    }
+
+    /* Screens & Overlays */
+    .screen {
+      position: absolute;
+      inset: 0;
+      display: none;
+      flex-direction: column;
+      z-index: 20;
+    }
+    .screen.active {
+      display: flex;
+    }
+
+    /* Hub Screen */
+    #hubScreen {
+      background: radial-gradient(circle at 50% 20%, #1e293b 0%, #0b0f19 75%);
+      padding: 16px;
+      overflow-y: auto;
+      align-items: center;
+    }
+
+    .hub-container {
+      width: 100%;
+      max-width: 920px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      padding-bottom: 24px;
+    }
+
+    .hub-header {
+      text-align: center;
+      padding: 14px 12px;
+      background: linear-gradient(135deg, rgba(30, 41, 59, 0.9), rgba(15, 23, 42, 0.95));
+      border: 1px solid #475569;
+      border-radius: 14px;
+      box-shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+    }
+
+    .game-title {
+      margin: 0;
+      font-size: clamp(1.7rem, 5vw, 2.7rem);
+      letter-spacing: 0.08em;
+      color: var(--gold);
+      text-shadow: 0 3px 12px rgba(245, 185, 66, 0.35);
+    }
+
+    .game-subtitle {
+      margin: 4px 0 10px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .hub-summary {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 10px;
+    }
+
+    .badge-stat {
+      background: rgba(15, 23, 42, 0.85);
+      border: 1px solid #334155;
+      border-radius: 999px;
+      padding: 6px 14px;
+      font-size: 0.9rem;
+      font-weight: 700;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+
+    .hub-nav {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px;
+    }
+
+    .btn {
+      border: 1px solid #475569;
+      border-radius: 10px;
+      background: #1e293b;
+      color: var(--text);
+      padding: 11px 14px;
+      font-size: 0.95rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.08s ease, background 0.15s ease, border-color 0.15s ease;
+    }
+    .btn:active { transform: scale(0.97); }
+    .btn:hover { background: #273549; border-color: #64748b; }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .btn-primary {
+      background: linear-gradient(135deg, #d97706, #b45309);
+      border-color: #f59e0b;
+      color: #fff;
+      font-size: 1.05rem;
+      box-shadow: 0 4px 16px rgba(217, 119, 6, 0.35);
+    }
+    .btn-primary:hover { background: linear-gradient(135deg, #f59e0b, #d97706); }
+
+    .btn-success {
+      background: linear-gradient(135deg, #16a34a, #15803d);
+      border-color: #22c55e;
+    }
+    .btn-danger {
+      background: linear-gradient(135deg, #dc2626, #991b1b);
+      border-color: #ef4444;
+    }
+
+    .btn-sm {
+      padding: 6px 10px;
+      font-size: 0.82rem;
+      border-radius: 8px;
+    }
+
+    .hub-panel {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 14px;
+      padding: 14px;
+      min-height: 280px;
+    }
+
+    /* HUD */
+    #hudLayer {
+      position: absolute;
+      inset: 0;
+      pointer-events: none;
+      display: none;
+      z-index: 10;
+    }
+    #hudLayer.active { display: block; }
+
+    .hud-top {
+      position: absolute;
+      top: 10px;
+      left: 10px;
+      right: 10px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
+    .hud-box {
+      pointer-events: auto;
+      background: rgba(13, 16, 24, 0.78);
+      backdrop-filter: blur(4px);
+      border: 1px solid rgba(100, 116, 139, 0.45);
+      border-radius: 10px;
+      padding: 8px 10px;
+    }
+
+    .hud-left {
+      min-width: 175px;
+      max-width: 240px;
+      flex: 1;
+    }
+
+    .hud-right {
+      text-align: right;
+      min-width: 145px;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+      gap: 4px;
+    }
+
+    .bar-wrap {
+      width: 100%;
+      height: 12px;
+      background: #1e293b;
+      border-radius: 999px;
+      overflow: hidden;
+      border: 1px solid #334155;
+      margin: 4px 0;
+      position: relative;
+    }
+    .bar-fill {
+      height: 100%;
+      width: 100%;
+      transition: width 0.12s linear;
+    }
+    .bar-hp { background: linear-gradient(90deg, #dc2626, #f87171); }
+    .bar-xp { background: linear-gradient(90deg, #0284c7, #38bdf8); }
+    .bar-day { background: linear-gradient(90deg, #d97706, #fbbf24); }
+
+    .hud-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+
+    /* Boss HP Bar */
+    #bossBarContainer {
+      position: absolute;
+      top: 96px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(420px, 86vw);
+      background: rgba(15, 23, 42, 0.88);
+      border: 1px solid #ef4444;
+      border-radius: 10px;
+      padding: 6px 10px;
+      display: none;
+      text-align: center;
+    }
+    #bossBarContainer.active { display: block; }
+    #bossNameLabel {
+      font-size: 0.85rem;
+      font-weight: 800;
+      color: #fca5a5;
+      margin-bottom: 3px;
+    }
+
+    /* Bottom Action Bar */
+    .hud-bottom {
+      position: absolute;
+      bottom: 14px;
+      left: 50%;
+      transform: translateX(-50%);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      pointer-events: auto;
+      z-index: 12;
+    }
+
+    .action-slot {
+      background: rgba(15, 23, 42, 0.86);
+      border: 1px solid #475569;
+      border-radius: 12px;
+      padding: 6px 10px;
+      min-width: 78px;
+      text-align: center;
+      color: var(--text);
+      cursor: pointer;
+      position: relative;
+      overflow: hidden;
+      font-size: 0.75rem;
+      font-weight: 700;
+    }
+    .action-slot:active { transform: scale(0.95); }
+    .action-slot.disabled { opacity: 0.5; }
+    .action-slot .icon { font-size: 1.25rem; display: block; line-height: 1.2; }
+    .action-slot .sub { font-size: 0.68rem; color: var(--muted); display: block; }
+    .cooldown-overlay {
+      position: absolute;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.62);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 0.9rem;
+      font-weight: 800;
+      color: #fff;
+      pointer-events: none;
+    }
+
+    /* Virtual Joystick */
+    #joystickArea {
+      position: absolute;
+      left: 16px;
+      bottom: 20px;
+      width: 120px;
+      height: 120px;
+      border-radius: 50%;
+      background: rgba(255, 255, 255, 0.06);
+      border: 2px solid rgba(255, 255, 255, 0.16);
+      pointer-events: auto;
+      touch-action: none;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      z-index: 11;
+    }
+    #joystickKnob {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background: rgba(245, 185, 66, 0.65);
+      border: 2px solid rgba(255, 255, 255, 0.8);
+      transform: translate(0px, 0px);
+      pointer-events: none;
+    }
+
+    @media (max-width: 680px) {
+      .hud-bottom {
+        left: auto;
+        right: 12px;
+        bottom: 22px;
+        transform: none;
+      }
+      .action-slot {
+        min-width: 64px;
+        padding: 5px 7px;
+      }
+      #joystickArea {
+        width: 108px;
+        height: 108px;
+        left: 12px;
+        bottom: 16px;
+      }
+    }
+
+    /* Modals */
+    .modal-backdrop {
+      position: absolute;
+      inset: 0;
+      background: rgba(5, 8, 15, 0.78);
+      backdrop-filter: blur(4px);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 14px;
+      z-index: 40;
+    }
+    .modal-backdrop.active { display: flex; }
+
+    .modal-card {
+      width: 100%;
+      max-width: 720px;
+      max-height: 88vh;
+      background: #141a29;
+      border: 1px solid #475569;
+      border-radius: 14px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 18px 40px rgba(0, 0, 0, 0.65);
+    }
+
+    .modal-header {
+      padding: 12px 16px;
+      background: #0f1522;
+      border-bottom: 1px solid #334155;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .modal-header h2 {
+      margin: 0;
+      font-size: 1.1rem;
+      color: var(--gold);
+    }
+
+    .modal-body {
+      padding: 14px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+
+    /* Cards & Grids */
+    .grid-cards {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: 10px;
+    }
+
+    .item-card {
+      background: #1b2336;
+      border: 1px solid #334155;
+      border-radius: 10px;
+      padding: 10px;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .item-title {
+      font-weight: 800;
+      font-size: 0.95rem;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 6px;
+    }
+
+    .item-meta {
+      font-size: 0.78rem;
+      color: var(--muted);
+      line-height: 1.4;
+    }
+
+    .rarity-ノーマル { color: var(--rarity-normal); }
+    .rarity-レア { color: var(--rarity-rare); }
+    .rarity-エピック { color: var(--rarity-epic); }
+    .rarity-レジェンダリー { color: var(--rarity-legendary); }
+
+    .tag {
+      font-size: 0.7rem;
+      padding: 2px 6px;
+      border-radius: 6px;
+      background: rgba(255, 255, 255, 0.08);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      white-space: nowrap;
+    }
+
+    /* Level Up Choices */
+    .perk-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+      gap: 10px;
+    }
+
+    .perk-card {
+      background: linear-gradient(160deg, #1e293b, #141c2e);
+      border: 2px solid #475569;
+      border-radius: 12px;
+      padding: 14px;
+      cursor: pointer;
+      text-align: left;
+      color: var(--text);
+      transition: transform 0.1s ease, border-color 0.15s ease;
+    }
+    .perk-card:hover {
+      border-color: var(--gold);
+      transform: translateY(-2px);
+    }
+    .perk-card h3 {
+      margin: 0 0 6px;
+      font-size: 1rem;
+      color: var(--gold);
+    }
+    .perk-card p {
+      margin: 0;
+      font-size: 0.84rem;
+      color: #cbd5e1;
+      line-height: 1.4;
+    }
+
+    /* Tabs */
+    .tab-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+    .tab-btn {
+      padding: 6px 11px;
+      border-radius: 8px;
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: #334155;
+      color: #fff;
+      border-color: var(--gold);
+    }
+
+    /* Toast Banner */
+    #toastContainer {
+      position: absolute;
+      top: 64px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 60;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      pointer-events: none;
+      width: min(360px, 90vw);
+    }
+    .toast {
+      background: rgba(15, 23, 42, 0.94);
+      border: 1px solid var(--gold);
+      border-radius: 10px;
+      padding: 8px 14px;
+      text-align: center;
+      font-size: 0.86rem;
+      font-weight: 700;
+      color: #fff;
+      box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+      animation: fadeSlide 2.6s ease forwards;
+    }
+    @keyframes fadeSlide {
+      0% { opacity: 0; transform: translateY(-10px); }
+      12% { opacity: 1; transform: translateY(0); }
+      82% { opacity: 1; transform: translateY(0); }
+      100% { opacity: 0; transform: translateY(-8px); }
+    }
+
+    .stat-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(170px, 1fr));
+      gap: 8px;
+    }
+    .stat-box {
+      background: #1b2336;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px 10px;
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.86rem;
+    }
+
+    .slot-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+    }
+    .slot-box {
+      background: #0f172a;
+      border: 1px solid #334155;
+      border-radius: 8px;
+      padding: 8px;
+      font-size: 0.8rem;
+    }
+    .slot-box strong { display: block; color: var(--muted); font-size: 0.72rem; margin-bottom: 2px; }
+  </style>
+</head>
+<body>
+<div id="app">
+  <!-- Game Canvas -->
+  <canvas id="gameCanvas"></canvas>
+
+  <!-- In-Game HUD -->
+  <div id="hudLayer">
+    <div class="hud-top">
+      <div class="hud-box hud-left">
+        <div class="hud-row">
+          <span id="hudLv">Lv.1</span>
+          <span id="hudCoins" style="color: var(--gold);">🪙 0</span>
+        </div>
+        <div class="bar-wrap" style="height:14px;">
+          <div id="hudHpBar" class="bar-fill bar-hp"></div>
+        </div>
+        <div class="hud-row" style="font-size:0.72rem;">
+          <span>HP</span>
+          <span id="hudHpText">100 / 100</span>
+        </div>
+        <div class="bar-wrap" style="height:8px; margin-top:5px;">
+          <div id="hudXpBar" class="bar-fill bar-xp" style="width:0%;"></div>
+        </div>
+        <div class="hud-row" style="font-size:0.68rem; color: var(--muted);">
+          <span>EXP</span>
+          <span id="hudXpText">0 / 40</span>
+        </div>
+      </div>
+
+      <div class="hud-box hud-right">
+        <div style="font-weight:800; font-size:0.95rem; color: var(--gold);" id="hudDay">1日目</div>
+        <div style="font-size:0.75rem; color: #cbd5e1;" id="hudArea">始まりの森</div>
+        <div class="bar-wrap" style="height:6px; width:115px;">
+          <div id="hudDayBar" class="bar-fill bar-day" style="width:0%;"></div>
+        </div>
+        <div style="font-size:0.72rem; color: var(--muted);" id="hudTime">00:00</div>
+        <button class="btn btn-sm" id="btnOpenMenu" style="margin-top:2px;">☰ メニュー</button>
+      </div>
+    </div>
+
+    <div id="bossBarContainer">
+      <div id="bossNameLabel">BOSS</div>
+      <div class="bar-wrap" style="height:12px;">
+        <div id="bossHpBar" class="bar-fill bar-hp"></div>
+      </div>
+    </div>
+
+    <!-- Virtual Joystick (Left) -->
+    <div id="joystickArea">
+      <div id="joystickKnob"></div>
+    </div>
+
+    <!-- Bottom Action Bar -->
+    <div class="hud-bottom">
+      <button class="action-slot" id="btnHudWeapon" title="装備確認">
+        <span class="icon">⚔️</span>
+        <span id="hudWeaponName">剣</span>
+        <span class="sub">自動攻撃</span>
+      </button>
+      <button class="action-slot" id="btnUseSkill" title="スキル (Space / E)">
+        <span class="icon">🌪️</span>
+        <span>旋風斬り</span>
+        <span class="sub">Space/E</span>
+        <div class="cooldown-overlay" id="skillCooldownOverlay" style="display:none;">0s</div>
+      </button>
+      <button class="action-slot" id="btnUsePotion" title="回復薬 (Q / F)">
+        <span class="icon">🧪</span>
+        <span>回復薬</span>
+        <span class="sub" id="hudPotionCount">残 2 (Q)</span>
+      </button>
+    </div>
+  </div>
+
+  <!-- Hub Screen -->
+  <div id="hubScreen" class="screen active">
+    <div class="hub-container">
+      <div class="hub-header">
+        <h1 class="game-title">SURVIVAL 100</h1>
+        <p class="game-subtitle">見下ろし型2DファンタジーサバイバルRPG — 100日目の魔王討伐とその先へ</p>
+        <div class="hub-summary">
+          <div class="badge-stat">🪙 所持コイン: <span id="hubCoins" style="color:var(--gold);">0</span></div>
+          <div class="badge-stat">🏆 最高到達日数: <span id="hubBestDay" style="color:#38bdf8;">0日</span></div>
+          <div class="badge-stat">⚔️ 総合戦力目安: <span id="hubPower">0</span></div>
+        </div>
+      </div>
+
+      <div class="hub-nav">
+        <button class="btn btn-primary" id="btnStartAdventure">▶ 冒険開始 (1日目)</button>
+        <button class="btn" id="btnHubTabShop">🛡 武器・防具ショップ</button>
+        <button class="btn" id="btnHubTabUpgrade">✨ 恒久強化ショップ</button>
+        <button class="btn" id="btnHubTabEquip">🎒 装備変更</button>
+        <button class="btn" id="btnHubTabRecord">📖 記録・図鑑・実績</button>
+      </div>
+
+      <div class="hub-panel" id="hubPanelContent"></div>
+    </div>
+  </div>
+
+  <!-- In-Game Menu Modal -->
+  <div id="gameMenuModal" class="modal-backdrop">
+    <div class="modal-card">
+      <div class="modal-header">
+        <h2>冒険メニュー</h2>
+        <button class="btn btn-sm" id="btnCloseGameMenu">✕ 閉じる (再開)</button>
+      </div>
+      <div class="modal-body">
+        <div class="tab-row" id="gameMenuTabs">
+          <button class="tab-btn active" data-tab="stats">ステータス</button>
+          <button class="tab-btn" data-tab="equip">装備変更</button>
+          <button class="tab-btn" data-tab="shop">武器・防具ショップ</button>
+          <button class="tab-btn" data-tab="bestiary">モンスター図鑑</button>
+          <button class="tab-btn" data-tab="system">拠点へ戻る</button>
+        </div>
+        <div id="gameMenuContent"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Level Up Modal -->
+  <div id="levelUpModal" class="modal-backdrop">
+    <div class="modal-card" style="max-width:660px;">
+      <div class="modal-header">
+        <h2 id="levelUpTitle">LEVEL UP! 強化を1つ選択</h2>
+      </div>
+      <div class="modal-body">
+        <div class="perk-grid" id="levelUpChoices"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Death / Result Modal -->
+  <div id="deathModal" class="modal-backdrop">
+    <div class="modal-card" style="max-width:480px;">
+      <div class="modal-header">
+        <h2 style="color:#f87171;">力尽きた……</h2>
+      </div>
+      <div class="modal-body" style="text-align:center;">
+        <p style="margin:0; font-size:1.15rem; font-weight:800;">
+          到達記録: <span id="deathReachedDay" style="color:var(--gold);">1日目</span>
+        </p>
+        <p style="margin:0; font-size:0.9rem; color:var(--muted);">
+          最高到達日数: <span id="deathBestDay">1日目</span>
+        </p>
+        <div class="stat-box" style="justify-content:center; gap:14px;">
+          <span>今回獲得コイン: <strong id="deathRunCoins" style="color:var(--gold);">0</strong></span>
+          <span>所持コイン合計: <strong id="deathTotalCoins" style="color:var(--gold);">0</strong></span>
+        </div>
+        <p style="margin:0; font-size:0.82rem; color:#94a3b8;">
+          レベルと冒険中の一時強化はリセットされますが、コイン・装備・恒久強化・図鑑・最高記録は引き継がれます。
+        </p>
+        <div style="display:flex; gap:10px; justify-content:center; flex-wrap:wrap; margin-top:6px;">
+          <button class="btn btn-primary" id="btnRetryFromDeath">▶ 1日目から再挑戦</button>
+          <button class="btn" id="btnReturnHubFromDeath">🏠 拠点へ戻る</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Day 100 Clear Modal -->
+  <div id="victoryModal" class="modal-backdrop">
+    <div class="modal-card" style="max-width:500px;">
+      <div class="modal-header">
+        <h2>🎉 100日目ボス撃破！</h2>
+      </div>
+      <div class="modal-body" style="text-align:center;">
+        <p style="margin:0; font-size:1.05rem; font-weight:700;">
+          破滅の魔王ゼノスを討伐しました！
+        </p>
+        <p style="margin:0; font-size:0.88rem; color:#cbd5e1;">
+          これより<strong>エンドレスモード（101日目以降）</strong>に突入します。<br>
+          150日目以降は50日ごとに心強い仲間を救出できます。限界まで生き残りましょう！
+        </p>
+        <button class="btn btn-primary" id="btnContinueEndless">エンドレスモードへ進む</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Toasts -->
+  <div id="toastContainer"></div>
+</div>
+
+<script>
+(() => {
+  "use strict";
+
+  /* =========================================================================
+   * 1. DATA REGISTRIES (拡張しやすいデータ駆動設計)
+   * ========================================================================= */
+  const SAVE_KEY = "survival100_save_data";
+  const CURRENT_SAVE_VERSION = 1;
+  const ARENA_SIZE = 2400;
+  const DAY_DURATION = 16; // 通常1日の秒数（ボス日は撃破で進行）
+
+  const EQUIP_CATEGORIES = [
+    "剣", "大剣", "槍", "斧", "弓", "杖", "盾", "頭防具", "胴防具", "アクセサリー"
+  ];
+
+  const CATEGORY_TO_SLOT = {
+    "剣": "weapon",
+    "大剣": "weapon",
+    "槍": "weapon",
+    "斧": "weapon",
+    "弓": "weapon",
+    "杖": "weapon",
+    "盾": "shield",
+    "頭防具": "head",
+    "胴防具": "body",
+    "アクセサリー": "accessory"
+  };
+
+  const SLOT_LABELS = {
+    weapon: "武器",
+    shield: "盾",
+    head: "頭防具",
+    body: "胴防具",
+    accessory: "アクセサリー"
+  };
+
+  // 将来的に約100種類までオブジェクト追加のみで拡張可能
+  const EQUIPMENT_DB = [
+    // --- 武器: 剣 ---
+    { id: "wp_sword_apprentice", name: "見習いの剣", category: "剣", rarity: "ノーマル", price: 0, icon: "🗡️",
+      stats: { atk: 6, atkSpeed: 0.05 }, range: 95, attackStyle: "slash", desc: "冒険者が最初に手にする扱いやすい剣。" },
+    { id: "wp_sword_iron", name: "鋼の騎士剣", category: "剣", rarity: "レア", price: 140, icon: "⚔️",
+      stats: { atk: 16, def: 2, atkSpeed: 0.12 }, range: 105, attackStyle: "slash", desc: "攻撃力と防御のバランスに優れた騎士の剣。" },
+    { id: "wp_sword_excalibur", name: "聖剣ルミナリア", category: "剣", rarity: "レジェンダリー", price: 3200, icon: "✨",
+      stats: { atk: 58, maxHp: 60, atkSpeed: 0.35, moveSpeed: 15 }, range: 125, attackStyle: "slash", desc: "聖なる光を放ち、広範囲を高速で斬り裂く伝説の剣。" },
+
+    // --- 武器: 大剣 ---
+    { id: "wp_greatsword_steel", name: "鉄塊の大剣", category: "大剣", rarity: "ノーマル", price: 90, icon: "🗡️",
+      stats: { atk: 14, maxHp: 15, atkSpeed: -0.1 }, range: 120, attackStyle: "cleave", desc: "重いが広範囲の敵をまとめて薙ぎ払う。" },
+    { id: "wp_greatsword_titan", name: "巨神の大剣", category: "大剣", rarity: "エピック", price: 1100, icon: "⚔️",
+      stats: { atk: 42, maxHp: 50, def: 4 }, range: 140, attackStyle: "cleave", desc: "圧倒的な一撃で敵の群れを粉砕する大剣。" },
+    { id: "wp_greatsword_ragnarok", name: "終焉の大剣ラグナ", category: "大剣", rarity: "レジェンダリー", price: 4200, icon: "🔥",
+      stats: { atk: 78, maxHp: 90, def: 6 }, range: 155, attackStyle: "cleave", desc: "大地を割り魔王すら両断する禁断の大剣。" },
+
+    // --- 武器: 槍 ---
+    { id: "wp_spear_hunter", name: "狩人の長槍", category: "槍", rarity: "ノーマル", price: 85, icon: "🔱",
+      stats: { atk: 10, moveSpeed: 8 }, range: 155, attackStyle: "thrust", desc: "長いリーチで敵を近づけずに貫く。" },
+    { id: "wp_spear_dragon", name: "竜騎士の聖槍", category: "槍", rarity: "エピック", price: 980, icon: "🔱",
+      stats: { atk: 34, atkSpeed: 0.2, moveSpeed: 16 }, range: 175, attackStyle: "thrust", desc: "竜の鱗すら貫通する鋭利な長槍。" },
+
+    // --- 武器: 斧 ---
+    { id: "wp_axe_battle", name: "戦士の戦斧", category: "斧", rarity: "レア", price: 220, icon: "🪓",
+      stats: { atk: 24, maxHp: 20 }, range: 110, attackStyle: "spin", desc: "周囲の敵を巻き込む豪快な戦斧。" },
+    { id: "wp_axe_berserk", name: "狂戦士の双斧", category: "斧", rarity: "エピック", price: 1350, icon: "🪓",
+      stats: { atk: 48, atkSpeed: 0.18, regen: 1.0 }, range: 120, attackStyle: "spin", desc: "闘争心を糧に敵を粉砕する双斧。" },
+
+    // --- 武器: 弓 ---
+    { id: "wp_bow_traveler", name: "旅人の弓", category: "弓", rarity: "ノーマル", price: 110, icon: "🏹",
+      stats: { atk: 11, atkSpeed: 0.15, moveSpeed: 10 }, range: 270, attackStyle: "arrow", desc: "離れた位置から安全に矢を放つ。" },
+    { id: "wp_bow_elf", name: "エルフの疾風弓", category: "弓", rarity: "エピック", price: 1250, icon: "🏹",
+      stats: { atk: 36, atkSpeed: 0.45, moveSpeed: 22 }, range: 320, attackStyle: "arrow", desc: "風を纏う矢を高速連射する名弓。" },
+
+    // --- 武器: 杖 ---
+    { id: "wp_staff_apprentice", name: "魔導士の杖", category: "杖", rarity: "ノーマル", price: 120, icon: "🪄",
+      stats: { atk: 12, regen: 0.6 }, range: 245, attackStyle: "magic", desc: "着弾時に小爆発を起こす魔弾を放つ。" },
+    { id: "wp_staff_crimson", name: "紅蓮の賢者杖", category: "杖", rarity: "レジェンダリー", price: 3600, icon: "🔮",
+      stats: { atk: 62, maxHp: 40, regen: 2.0, atkSpeed: 0.25 }, range: 290, attackStyle: "magic", desc: "灼熱の魔力球で敵集団を一掃する。" },
+
+    // --- 盾 ---
+    { id: "sh_wood", name: "木の円盾", category: "盾", rarity: "ノーマル", price: 65, icon: "🛡️",
+      stats: { def: 3, maxHp: 20 }, desc: "軽くて丈夫な木製の盾。" },
+    { id: "sh_knight", name: "守護の鉄盾", category: "盾", rarity: "レア", price: 280, icon: "🛡️",
+      stats: { def: 8, maxHp: 55, regen: 0.5 }, desc: "激しい攻撃を受け止める重厚な鉄盾。" },
+    { id: "sh_aegis", name: "イージスの聖盾", category: "盾", rarity: "レジェンダリー", price: 2800, icon: "🔰",
+      stats: { def: 22, maxHp: 160, regen: 2.5 }, desc: "神話に謳われる絶対防御の聖盾。" },
+
+    // --- 頭防具 ---
+    { id: "hd_hood", name: "革のフード", category: "頭防具", rarity: "ノーマル", price: 55, icon: "🪖",
+      stats: { def: 2, moveSpeed: 8 }, desc: "視界を妨げない軽装フード。" },
+    { id: "hd_helm", name: "鋼鉄の兜", category: "頭防具", rarity: "レア", price: 240, icon: "🪖",
+      stats: { def: 6, maxHp: 40 }, desc: "頭部を守る堅牢な兜。" },
+    { id: "hd_crown", name: "覇王の戦冠", category: "頭防具", rarity: "エピック", price: 1400, icon: "👑",
+      stats: { def: 12, atk: 15, maxHp: 80 }, desc: "戦意と耐久をともに高める王冠。" },
+
+    // --- 胴防具 ---
+    { id: "bd_tunic", name: "旅人の外套", category: "胴防具", rarity: "ノーマル", price: 70, icon: "🧥",
+      stats: { def: 3, maxHp: 25 }, desc: "長旅に適した丈夫な外套。" },
+    { id: "bd_plate", name: "聖騎士の鎧", category: "胴防具", rarity: "レア", price: 340, icon: "🦺",
+      stats: { def: 10, maxHp: 80 }, desc: "聖騎士団に伝わる白銀の鎧。" },
+    { id: "bd_dragon", name: "竜鱗の魔鎧", category: "胴防具", rarity: "レジェンダリー", price: 3400, icon: "🐉",
+      stats: { def: 24, maxHp: 220, atk: 18, regen: 1.5 }, desc: "古竜の鱗から鍛えられた究極の鎧。" },
+
+    // --- アクセサリー ---
+    { id: "ac_ring_life", name: "生命の指輪", category: "アクセサリー", rarity: "ノーマル", price: 95, icon: "💍",
+      stats: { maxHp: 35, regen: 0.8 }, desc: "生命力を底上げし自然回復を促す。" },
+    { id: "ac_anklet", name: "疾風のアンクレット", category: "アクセサリー", rarity: "レア", price: 320, icon: "🪽",
+      stats: { moveSpeed: 28, atkSpeed: 0.18 }, desc: "足取りを軽くし攻撃の手数を増やす。" },
+    { id: "ac_amulet", name: "賢者の護符", category: "アクセサリー", rarity: "エピック", price: 1200, icon: "📿",
+      stats: { atk: 20, def: 6, regen: 1.8 }, desc: "攻防と回復を兼ね備えた神秘の護符。" },
+    { id: "ac_phoenix", name: "不死鳥の紋章", category: "アクセサリー", rarity: "レジェンダリー", price: 3800, icon: "🔥",
+      stats: { maxHp: 180, atk: 32, regen: 4.0, moveSpeed: 20 }, desc: "不滅の炎が宿り傷を瞬時に癒やす。" }
+  ];
+
+  const PERM_UPGRADES_DB = [
+    { id: "atk", name: "初期攻撃力", icon: "⚔️", baseCost: 25, costScale: 1.48, maxLv: 30, perLv: 3, unit: "", desc: "冒険開始時の基礎攻撃力 +3" },
+    { id: "maxHp", name: "初期HP", icon: "❤️", baseCost: 20, costScale: 1.45, maxLv: 30, perLv: 18, unit: "", desc: "冒険開始時の最大HP +18" },
+    { id: "def", name: "初期防御力", icon: "🛡️", baseCost: 25, costScale: 1.5, maxLv: 25, perLv: 1.5, unit: "", desc: "冒険開始時の防御力 +1.5" },
+    { id: "atkSpeed", name: "初期攻撃速度", icon: "⚡", baseCost: 35, costScale: 1.55, maxLv: 20, perLv: 0.08, unit: "/秒", desc: "攻撃速度 +0.08/秒" },
+    { id: "moveSpeed", name: "初期移動速度", icon: "💨", baseCost: 30, costScale: 1.5, maxLv: 15, perLv: 8, unit: "", desc: "移動速度 +8" },
+    { id: "coinBonus", name: "コイン獲得量", icon: "🪙", baseCost: 40, costScale: 1.55, maxLv: 20, perLv: 10, unit: "%", desc: "獲得コイン量 +10%" }
+  ];
+
+  const AREAS_DB = [
+    { id: "forest", name: "始まりの森", minDay: 1, bg: "#1c3826", tile: "#23442e", accent: "#2d5a3b", particle: "#4ade80" },
+    { id: "cave", name: "忘却の洞窟", minDay: 11, bg: "#1d2233", tile: "#262c42", accent: "#384261", particle: "#60a5fa" },
+    { id: "wasteland", name: "焦熱の荒野", minDay: 21, bg: "#3a251c", tile: "#4a3024", accent: "#66402d", particle: "#fb923c" },
+    { id: "abyss", name: "魔王の領域", minDay: 51, bg: "#1e1226", tile: "#2b1936", accent: "#472154", particle: "#f43f5e" }
+  ];
+
+  const MONSTERS_DB = {
+    slime: {
+      id: "slime", name: "スライム", type: "通常", hp: 24, atk: 7, def: 0, speed: 78, radius: 15,
+      xp: 12, coins: 4, minDay: 1, color: "#4ade80", attackRange: 24, atkCd: 1.0,
+      desc: "弱いが集団で現れるゼリー状の魔物。"
+    },
+    goblin: {
+      id: "goblin", name: "ゴブリン", type: "通常", hp: 34, atk: 10, def: 1, speed: 132, radius: 16,
+      xp: 18, coins: 7, minDay: 2, color: "#84cc16", attackRange: 28, atkCd: 0.85,
+      desc: "素早い足取りで獲物に飛びかかる小鬼。"
+    },
+    skeleton: {
+      id: "skeleton", name: "スケルトン", type: "通常", hp: 68, atk: 14, def: 5, speed: 84, radius: 18,
+      xp: 28, coins: 12, minDay: 4, color: "#e2e8f0", attackRange: 32, atkCd: 1.15,
+      desc: "高いHPと硬い骨の防御力を持つ不死の戦士。"
+    },
+    elite_brute: {
+      id: "elite_brute", name: "ダークナイト（強敵）", type: "強敵", hp: 165, atk: 22, def: 8, speed: 96, radius: 24,
+      xp: 70, coins: 34, minDay: 6, color: "#a855f7", attackRange: 170, atkCd: 1.8, shoots: true,
+      desc: "通常の魔物を凌駕する強敵。闇の魔弾も放つ。"
+    },
+    boss_mid: {
+      id: "boss_mid", name: "古代の守護魔獣", type: "ボス", hp: 520, atk: 28, def: 10, speed: 88, radius: 36,
+      xp: 220, coins: 120, minDay: 10, color: "#f97316", attackRange: 220, atkCd: 1.6, isBoss: true,
+      desc: "10日ごとに出現する強大な守護ボス。範囲攻撃と弾幕を操る。"
+    },
+    boss_100: {
+      id: "boss_100", name: "破滅の魔王ゼノス", type: "最終ボス", hp: 2200, atk: 42, def: 16, speed: 96, radius: 44,
+      xp: 1000, coins: 600, minDay: 100, color: "#ef4444", attackRange: 260, atkCd: 1.35, isBoss: true,
+      desc: "100日目に降臨する本作の最終ボス。討伐でエンドレスモードが解放される。"
+    }
+  };
+
+  // 150日目以降、50日ごとに救出できる仲間システム拡張定義
+  const COMPANION_CLASSES = {
+    swordsman: { id: "swordsman", name: "剣士アレン", role: "剣士", unlockDay: 150, hp: 260, atk: 34, def: 8, speed: 155, range: 70, cd: 0.85, color: "#38bdf8", desc: "近距離攻撃で前線を支える。" },
+    archer:    { id: "archer",    name: "弓使いリナ", role: "弓使い", unlockDay: 200, hp: 190, atk: 28, def: 5, speed: 160, range: 260, cd: 0.9, color: "#4ade80", desc: "遠距離から精密な矢を放つ。" },
+    mage:      { id: "mage",      name: "魔導士セレス", role: "魔法使い", unlockDay: 250, hp: 180, atk: 40, def: 4, speed: 150, range: 230, cd: 1.35, color: "#c084fc", desc: "範囲魔法で敵の群れを焼き払う。" },
+    knight:    { id: "knight",    name: "重騎士ガロン", role: "騎士", unlockDay: 300, hp: 460, atk: 24, def: 18, speed: 135, range: 65, cd: 1.1, color: "#fbbf24", desc: "高い防御力で敵を引きつける。" },
+    priest:    { id: "priest",    name: "僧侶ミリア", role: "僧侶", unlockDay: 350, hp: 220, atk: 16, def: 7, speed: 150, range: 180, cd: 3.0, color: "#f472b6", desc: "味方とプレイヤーのHPを回復する。" }
+  };
+
+  const LEVEL_UP_PERKS = [
+    { id: "atk_up", title: "剛腕の覚醒", desc: "攻撃力 +5", apply: (p) => { p.runBonus.atk += 5; } },
+    { id: "atk_pct", title: "戦士の気迫", desc: "攻撃力 +14%", apply: (p) => { p.runMult.atk += 0.14; } },
+    { id: "hp_up", title: "生命の泉", desc: "最大HP +35 ＆ HP35回復", apply: (p) => { p.runBonus.maxHp += 35; p.healAmountOnRecalc += 35; } },
+    { id: "def_up", title: "鉄壁の守り", desc: "防御力 +3", apply: (p) => { p.runBonus.def += 3; } },
+    { id: "as_up", title: "連撃の極意", desc: "攻撃速度 +15%", apply: (p) => { p.runMult.atkSpeed += 0.15; } },
+    { id: "ms_up", title: "疾風の歩法", desc: "移動速度 +18", apply: (p) => { p.runBonus.moveSpeed += 18; } },
+    { id: "regen_up", title: "再生の祝福", desc: "自動回復 +1.5 HP/秒", apply: (p) => { p.runBonus.regen += 1.5; } },
+    { id: "range_up", title: "武器熟練", desc: "攻撃範囲 +18% ＆ 攻撃力 +2", apply: (p) => { p.runMult.range += 0.18; p.runBonus.atk += 2; } },
+    { id: "vamp", title: "吸収の紋章", desc: "敵撃破時 HP +2 回復", apply: (p) => { p.runBonus.lifeOnKill += 2; } },
+    { id: "full_heal", title: "応急大回復", desc: "HPを50%回復 ＆ 防御力 +1.5", apply: (p) => { p.runBonus.def += 1.5; p.healRatioOnRecalc += 0.5; } }
+  ];
+
+  const ACHIEVEMENTS_DB = [
+    { id: "first_blood", name: "初陣", desc: "モンスターを1体倒す", check: (s) => s.stats.totalKills >= 1 },
+    { id: "slime_30", name: "スライムハンター", desc: "スライムを累計30体倒す", check: (s) => (s.bestiary.slime || 0) >= 30 },
+    { id: "day_10", name: "最初の試練", desc: "10日目に到達する", check: (s) => s.bestDay >= 10 },
+    { id: "day_11", name: "洞窟の探索者", desc: "11日目（忘却の洞窟）に到達する", check: (s) => s.bestDay >= 11 },
+    { id: "day_21", name: "荒野の踏破者", desc: "21日目（焦熱の荒野）に到達する", check: (s) => s.bestDay >= 21 },
+    { id: "day_50", name: "半百の英雄", desc: "50日目に到達する", check: (s) => s.bestDay >= 50 },
+    { id: "day_100_clear", name: "SURVIVAL 100", desc: "100日目の魔王を撃破する", check: (s) => s.stats.boss100Defeated },
+    { id: "gear_5", name: "装備コレクター", desc: "装備を合計5個以上所持する", check: (s) => s.ownedEquipment.length >= 5 },
+    { id: "perm_5", name: "鍛錬の証", desc: "恒久強化を合計5回購入する", check: (s) => Object.values(s.permUpgrades).reduce((a, b) => a + b, 0) >= 5 }
+  ];
+
+  /* =========================================================================
+   * 2. SAVE MANAGER (バージョン管理＆データ移行対応)
+   * ========================================================================= */
+  function createDefaultSave() {
+    return {
+      version: CURRENT_SAVE_VERSION,
+      coins: 0,
+      ownedEquipment: ["wp_sword_apprentice"],
+      equipped: {
+        weapon: "wp_sword_apprentice",
+        shield: null,
+        head: null,
+        body: null,
+        accessory: null
+      },
+      permUpgrades: {
+        atk: 0,
+        maxHp: 0,
+        def: 0,
+        atkSpeed: 0,
+        moveSpeed: 0,
+        coinBonus: 0
+      },
+      bestDay: 0,
+      bestiary: {},
+      achievements: [],
+      unlockedCompanions: [],
+      stats: {
+        totalKills: 0,
+        totalRuns: 0,
+        boss100Defeated: false
+      }
+    };
+  }
+
+  function migrateSaveData(raw) {
+    const base = createDefaultSave();
+    if (!raw || typeof raw !== "object") return base;
+    // 将来のバージョンアップ時のマイグレーション処理用フック
+    const merged = {
+      ...base,
+      ...raw,
+      equipped: { ...base.equipped, ...(raw.equipped || {}) },
+      permUpgrades: { ...base.permUpgrades, ...(raw.permUpgrades || {}) },
+      bestiary: { ...(raw.bestiary || {}) },
+      stats: { ...base.stats, ...(raw.stats || {}) },
+      ownedEquipment: Array.isArray(raw.ownedEquipment) ? Array.from(new Set([...base.ownedEquipment, ...raw.ownedEquipment])) : base.ownedEquipment,
+      achievements: Array.isArray(raw.achievements) ? raw.achievements : [],
+      unlockedCompanions: Array.isArray(raw.unlockedCompanions) ? raw.unlockedCompanions : [],
+      version: CURRENT_SAVE_VERSION
+    };
+    return merged;
+  }
+
+  const SaveManager = {
+    data: createDefaultSave(),
+    load() {
+      try {
+        const rawStr = localStorage.getItem(SAVE_KEY);
+        if (rawStr) {
+          const parsed = JSON.parse(rawStr);
+          this.data = migrateSaveData(parsed);
+        } else {
+          this.data = createDefaultSave();
+        }
+      } catch (e) {
+        console.warn("Save load failed, using default:", e);
+        this.data = createDefaultSave();
+      }
+    },
+    save() {
+      try {
+        this.data.version = CURRENT_SAVE_VERSION;
+        localStorage.setItem(SAVE_KEY, JSON.stringify(this.data));
+      } catch (e) {
+        console.warn("Save write failed:", e);
+      }
+    },
+    resetAll() {
+      this.data = createDefaultSave();
+      this.save();
+    }
+  };
+
+  /* =========================================================================
+   * 3. STAT & UTILITY HELPERS
+   * ========================================================================= */
+  function getEquipmentById(id) {
+    return EQUIPMENT_DB.find(e => e.id === id) || null;
+  }
+
+  function getPermUpgradeCost(up, level) {
+    return Math.floor(up.baseCost * Math.pow(up.costScale, level));
+  }
+
+  function getEquippedStats() {
+    const total = { atk: 0, maxHp: 0, def: 0, atkSpeed: 0, moveSpeed: 0, regen: 0 };
+    for (const slot of Object.keys(SaveManager.data.equipped)) {
+      const id = SaveManager.data.equipped[slot];
+      const item = getEquipmentById(id);
+      if (item && item.stats) {
+        for (const k of Object.keys(total)) {
+          if (item.stats[k]) total[k] += item.stats[k];
+        }
+      }
+    }
+    return total;
+  }
+
+  function getBaseHubStats() {
+    const perm = SaveManager.data.permUpgrades;
+    const eq = getEquippedStats();
+    return {
+      maxHp: Math.round(100 + perm.maxHp * 18 + eq.maxHp),
+      atk: Math.round(14 + perm.atk * 3 + eq.atk),
+      def: Number((2 + perm.def * 1.5 + eq.def).toFixed(1)),
+      atkSpeed: Number((1.25 + perm.atkSpeed * 0.08 + eq.atkSpeed).toFixed(2)),
+      moveSpeed: Math.round(180 + perm.moveSpeed * 8 + eq.moveSpeed),
+      regen: Number((0.4 + eq.regen).toFixed(1)),
+      coinMult: 1 + perm.coinBonus * 0.1
+    };
+  }
+
+  function getAreaForDay(day) {
+    let current = AREAS_DB[0];
+    for (const area of AREAS_DB) {
+      if (day >= area.minDay) current = area;
+    }
+    return current;
+  }
+
+  function showToast(msg) {
+    const container = document.getElementById("toastContainer");
+    const el = document.createElement("div");
+    el.className = "toast";
+    el.textContent = msg;
+    container.appendChild(el);
+    setTimeout(() => el.remove(), 2700);
+  }
+
+  function checkAchievements() {
+    let unlockedNow = false;
+    for (const ach of ACHIEVEMENTS_DB) {
+      if (!SaveManager.data.achievements.includes(ach.id) && ach.check(SaveManager.data)) {
+        SaveManager.data.achievements.push(ach.id);
+        showToast(`🏅 実績解除: ${ach.name}`);
+        unlockedNow = true;
+      }
+    }
+    if (unlockedNow) SaveManager.save();
+  }
+
+  function drawRoundedRect(ctx, x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.lineTo(x + w - r, y);
+    ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+    ctx.lineTo(x + w, y + h - r);
+    ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    ctx.lineTo(x + r, y + h);
+    ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+    ctx.lineTo(x, y + r);
+    ctx.quadraticCurveTo(x, y, x + r, y);
+    ctx.closePath();
+  }
+
+  /* =========================================================================
+   * 4. GAME ENGINE & RENDERER
+   * ========================================================================= */
+  const canvas = document.getElementById("gameCanvas");
+  const ctx = canvas.getContext("2d");
+
+  const Input = {
+    keys: {},
+    joyX: 0,
+    joyY: 0,
+    joyActive: false
+  };
+
+  const Game = {
+    mode: "hub", // "hub" | "playing"
+    paused: false,
+    day: 1,
+    dayTimer: 0,
+    elapsedTotal: 0,
+    runCoins: 0,
+    spawnTimer: 0,
+    bossSpawnedThisDay: false,
+    endlessNotified: false,
+    skillCooldown: 0,
+    skillMaxCd: 7.5,
+    potionCharges: 2,
+    potionMaxCharges: 3,
+    potionCd: 0,
+    screenShake: 0,
+    lastSaveTick: 0,
+
+    player: null,
+    enemies: [],
+    companions: [],
+    projectiles: [],
+    slashEffects: [],
+    particles: [],
+    floatingTexts: [],
+    groundProps: [],
+    camera: { x: ARENA_SIZE / 2, y: ARENA_SIZE / 2 }
+  };
+
+  function createPlayerObject() {
+    const base = getBaseHubStats();
+    const weapon = getEquipmentById(SaveManager.data.equipped.weapon) || EQUIPMENT_DB[0];
+    return {
+      x: ARENA_SIZE / 2,
+      y: ARENA_SIZE / 2,
+      radius: 17,
+      facingAngle: 0,
+      walkPhase: 0,
+      level: 1,
+      xp: 0,
+      nextXp: 40,
+      hp: base.maxHp,
+      maxHp: base.maxHp,
+      atk: base.atk,
+      def: base.def,
+      atkSpeed: base.atkSpeed,
+      moveSpeed: base.moveSpeed,
+      regen: base.regen,
+      range: weapon.range || 95,
+      attackStyle: weapon.attackStyle || "slash",
+      atkTimer: 0,
+      hitFlash: 0,
+      runBonus: { atk: 0, maxHp: 0, def: 0, atkSpeed: 0, moveSpeed: 0, regen: 0, lifeOnKill: 0 },
+      runMult: { atk: 1, atkSpeed: 1, range: 1 },
+      healAmountOnRecalc: 0,
+      healRatioOnRecalc: 0
+    };
+  }
+
+  function recalculatePlayerStats() {
+    const p = Game.player;
+    if (!p) return;
+    const base = getBaseHubStats();
+    const weapon = getEquipmentById(SaveManager.data.equipped.weapon) || EQUIPMENT_DB[0];
+    const prevMax = p.maxHp;
+
+    p.maxHp = Math.max(10, Math.round(base.maxHp + p.runBonus.maxHp));
+    p.atk = Math.max(1, Math.round((base.atk + p.runBonus.atk) * p.runMult.atk));
+    p.def = Number((base.def + p.runBonus.def).toFixed(1));
+    p.atkSpeed = Math.max(0.3, Number(((base.atkSpeed + p.runBonus.atkSpeed) * p.runMult.atkSpeed).toFixed(2)));
+    p.moveSpeed = Math.round(base.moveSpeed + p.runBonus.moveSpeed);
+    p.regen = Number((base.regen + p.runBonus.regen).toFixed(1));
+    p.range = Math.round((weapon.range || 95) * p.runMult.range);
+    p.attackStyle = weapon.attackStyle || "slash";
+
+    if (p.maxHp > prevMax) {
+      p.hp += (p.maxHp - prevMax);
+    }
+    if (p.healAmountOnRecalc > 0) {
+      p.hp += p.healAmountOnRecalc;
+      p.healAmountOnRecalc = 0;
+    }
+    if (p.healRatioOnRecalc > 0) {
+      p.hp += Math.round(p.maxHp * p.healRatioOnRecalc);
+      p.healRatioOnRecalc = 0;
+    }
+    p.hp = Math.min(p.maxHp, p.hp);
+    updateHud();
+  }
+
+  function generateGroundProps() {
+    Game.groundProps = [];
+    for (let i = 0; i < 160; i++) {
+      Game.groundProps.push({
+        x: 60 + Math.random() * (ARENA_SIZE - 120),
+        y: 60 + Math.random() * (ARENA_SIZE - 120),
+        size: 6 + Math.random() * 14,
+        kind: i % 3
+      });
+    }
+  }
+
+  function spawnSavedCompanions() {
+    Game.companions = [];
+    for (const key of SaveManager.data.unlockedCompanions) {
+      const def = COMPANION_CLASSES[key];
+      if (!def) continue;
+      Game.companions.push({
+        ...def,
+        x: Game.player.x + (Math.random() * 80 - 40),
+        y: Game.player.y + (Math.random() * 80 - 40),
+        maxHp: def.hp,
+        atkTimer: 0,
+        downed: false,
+        hitFlash: 0
+      });
+    }
+  }
+
+  function startNewRun() {
+    SaveManager.data.stats.totalRuns += 1;
+    if (SaveManager.data.bestDay < 1) SaveManager.data.bestDay = 1;
+    SaveManager.save();
+
+    Game.mode = "playing";
+    Game.paused = false;
+    Game.day = 1;
+    Game.dayTimer = 0;
+    Game.elapsedTotal = 0;
+    Game.runCoins = 0;
+    Game.spawnTimer = 0.5;
+    Game.bossSpawnedThisDay = false;
+    Game.endlessNotified = false;
+    Game.skillCooldown = 0;
+    Game.potionCharges = 2;
+    Game.potionCd = 0;
+    Game.enemies = [];
+    Game.projectiles = [];
+    Game.slashEffects = [];
+    Game.particles = [];
+    Game.floatingTexts = [];
+
+    Game.player = createPlayerObject();
+    Game.camera.x = Game.player.x;
+    Game.camera.y = Game.player.y;
+    generateGroundProps();
+    spawnSavedCompanions();
+
+    document.getElementById("hubScreen").classList.remove("active");
+    document.getElementById("hudLayer").classList.add("active");
+    document.getElementById("deathModal").classList.remove("active");
+    document.getElementById("gameMenuModal").classList.remove("active");
+    document.getElementById("levelUpModal").classList.remove("active");
+    document.getElementById("victoryModal").classList.remove("active");
+
+    updateHud();
+    showToast(`1日目: ${getAreaForDay(1).name} — サバイバル開始！`);
+  }
+
+  function returnToHub() {
+    Game.mode = "hub";
+    Game.paused = true;
+    document.getElementById("hudLayer").classList.remove("active");
+    document.getElementById("gameMenuModal").classList.remove("active");
+    document.getElementById("deathModal").classList.remove("active");
+    document.getElementById("hubScreen").classList.add("active");
+    renderHub();
+  }
+
+  /* --- Spawning & Scaling --- */
+  function getEnemyScaling(day) {
+    const hpMult = 1 + (day - 1) * 0.16 + Math.pow(Math.max(0, day - 20), 1.32) * 0.025;
+    const atkMult = 1 + (day - 1) * 0.10 + Math.max(0, day - 30) * 0.035;
+    const rewardMult = 1 + (day - 1) * 0.08;
+    return { hpMult, atkMult, rewardMult };
+  }
+
+  function spawnEnemy(typeId, customPos = null) {
+    if (Game.enemies.length >= 110 && !MONSTERS_DB[typeId].isBoss) return;
+    const def = MONSTERS_DB[typeId];
+    const scale = getEnemyScaling(Game.day);
+
+    let x, y;
+    if (customPos) {
+      x = customPos.x;
+      y = customPos.y;
+    } else {
+      const angle = Math.random() * Math.PI * 2;
+      const dist = Math.max(canvas.width, canvas.height) * 0.45 + 140;
+      x = Math.max(40, Math.min(ARENA_SIZE - 40, Game.player.x + Math.cos(angle) * dist));
+      y = Math.max(40, Math.min(ARENA_SIZE - 40, Game.player.y + Math.sin(angle) * dist));
+    }
+
+    const hp = Math.round(def.hp * scale.hpMult * (def.isBoss ? (1 + (Game.day / 100) * 0.5) : 1));
+    const atk = Math.round(def.atk * scale.atkMult);
+    const defStat = Math.round(def.def * (1 + (Game.day - 1) * 0.04));
+
+    Game.enemies.push({
+      id: typeId,
+      name: def.isBoss && Game.day !== 100 ? `${Game.day}日目の守護者` : def.name,
+      isBoss: !!def.isBoss,
+      isFinalBoss: typeId === "boss_100",
+      shoots: !!def.shoots,
+      x, y,
+      radius: def.radius,
+      hp,
+      maxHp: hp,
+      atk,
+      def: defStat,
+      speed: def.speed + Math.min(45, Game.day * 0.4),
+      xp: Math.round(def.xp * scale.rewardMult),
+      coins: Math.round(def.coins * scale.rewardMult),
+      color: def.color,
+      attackRange: def.attackRange,
+      atkCd: def.atkCd,
+      atkTimer: 0.4,
+      specialTimer: 3.0,
+      telegraph: null,
+      hitFlash: 0,
+      bobPhase: Math.random() * 6
+    });
+  }
+
+  function pickEnemyTypeForDay(day) {
+    const pool = ["slime", "slime", "slime"];
+    if (day >= 2) pool.push("goblin", "goblin");
+    if (day >= 4) pool.push("skeleton", "skeleton");
+    if (day >= 6 && Math.random() < Math.min(0.28, 0.08 + day * 0.004)) {
+      return "elite_brute";
+    }
+    return pool[Math.floor(Math.random() * pool.length)];
+  }
+
+  /* --- Combat Actions --- */
+  function spawnFloatingText(x, y, text, color = "#fff", size = 14) {
+    if (Game.floatingTexts.length > 60) Game.floatingTexts.shift();
+    Game.floatingTexts.push({ x, y, text, color, size, life: 0.75, maxLife: 0.75 });
+  }
+
+  function spawnParticles(x, y, color, count = 6) {
+    if (Game.particles.length > 140) return;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const spd = 40 + Math.random() * 110;
+      Game.particles.push({
+        x, y,
+        vx: Math.cos(a) * spd,
+        vy: Math.sin(a) * spd,
+        r: 2 + Math.random() * 3,
+        color,
+        life: 0.35 + Math.random() * 0.25,
+        maxLife: 0.6
+      });
+    }
+  }
+
+  function damageEnemy(enemy, rawDmg, knockAngle = null, knockForce = 65) {
+    const actual = Math.max(1, Math.round(rawDmg - enemy.def * 0.45));
+    enemy.hp -= actual;
+    enemy.hitFlash = 0.12;
+    spawnFloatingText(enemy.x + (Math.random() * 16 - 8), enemy.y - enemy.radius - 4, `${actual}`, "#fef08a", 14);
+
+    if (knockAngle !== null && !enemy.isBoss) {
+      enemy.x += Math.cos(knockAngle) * (knockForce * 0.12);
+      enemy.y += Math.sin(knockAngle) * (knockForce * 0.12);
+    }
+
+    if (enemy.hp <= 0) {
+      killEnemy(enemy);
+      return true;
+    }
+    return false;
+  }
+
+  function killEnemy(enemy) {
+    const p = Game.player;
+    spawnParticles(enemy.x, enemy.y, enemy.color, enemy.isBoss ? 26 : 9);
+
+    // 経験値・コイン獲得
+    const coinMult = 1 + SaveManager.data.permUpgrades.coinBonus * 0.1;
+    const gainedCoins = Math.max(1, Math.round(enemy.coins * coinMult));
+    Game.runCoins += gainedCoins;
+    SaveManager.data.coins += gainedCoins;
+    SaveManager.data.stats.totalKills += 1;
+    SaveManager.data.bestiary[enemy.id] = (SaveManager.data.bestiary[enemy.id] || 0) + 1;
+
+    spawnFloatingText(enemy.x, enemy.y - 22, `+${gainedCoins}G`, "#fbbf24", 12);
+
+    // 撃破時回復
+    if (p.runBonus.lifeOnKill > 0) {
+      p.hp = Math.min(p.maxHp, p.hp + p.runBonus.lifeOnKill);
+    }
+
+    // 経験値加算 & レベルアップ判定
+    p.xp += enemy.xp;
+    checkLevelUp();
+
+    if (enemy.isFinalBoss) {
+      SaveManager.data.stats.boss100Defeated = true;
+      SaveManager.save();
+      checkAchievements();
+      onDayComplete(true);
+    } else if (enemy.isBoss) {
+      SaveManager.save();
+      onDayComplete(false);
+    }
+  }
+
+  function checkLevelUp() {
+    const p = Game.player;
+    if (p.xp >= p.nextXp) {
+      p.xp -= p.nextXp;
+      p.level += 1;
+      p.nextXp = Math.round(p.nextXp * 1.28 + 18);
+      showLevelUpModal();
+    }
+  }
+
+  function performPlayerAutoAttack() {
+    const p = Game.player;
+    let nearest = null;
+    let bestDist = Infinity;
+
+    for (const e of Game.enemies) {
+      if (e.hp <= 0) continue;
+      const d = Math.hypot(e.x - p.x, e.y - p.y) - e.radius;
+      if (d <= p.range && d < bestDist) {
+        bestDist = d;
+        nearest = e;
+      }
+    }
+
+    if (!nearest) return false;
+
+    const angle = Math.atan2(nearest.y - p.y, nearest.x - p.x);
+    p.facingAngle = angle;
+
+    const style = p.attackStyle;
+    if (style === "arrow" || style === "magic") {
+      Game.projectiles.push({
+        fromPlayer: true,
+        x: p.x + Math.cos(angle) * 16,
+        y: p.y + Math.sin(angle) * 16,
+        vx: Math.cos(angle) * (style === "arrow" ? 560 : 420),
+        vy: Math.sin(angle) * (style === "arrow" ? 560 : 420),
+        radius: style === "arrow" ? 5 : 9,
+        dmg: p.atk,
+        aoe: style === "magic" ? 56 : 0,
+        color: style === "arrow" ? "#fef08a" : "#f472b6",
+        life: 1.1
+      });
+    } else if (style === "spin") {
+      // 全方位斧回転斬り
+      Game.slashEffects.push({ x: p.x, y: p.y, angle, arc: Math.PI * 2, radius: p.range, color: "#fb923c", life: 0.2, maxLife: 0.2 });
+      for (const e of [...Game.enemies]) {
+        if (e.hp <= 0) continue;
+        const d = Math.hypot(e.x - p.x, e.y - p.y) - e.radius;
+        if (d <= p.range) {
+          damageEnemy(e, p.atk * 1.05, Math.atan2(e.y - p.y, e.x - p.x), 80);
+        }
+      }
+    } else if (style === "thrust") {
+      // 槍突き（前方細長範囲）
+      Game.slashEffects.push({ x: p.x, y: p.y, angle, arc: 0.48, radius: p.range, color: "#38bdf8", life: 0.16, maxLife: 0.16 });
+      for (const e of [...Game.enemies]) {
+        if (e.hp <= 0) continue;
+        const dx = e.x - p.x;
+        const dy = e.y - p.y;
+        const d = Math.hypot(dx, dy) - e.radius;
+        if (d <= p.range) {
+          const diff = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - angle), Math.cos(Math.atan2(dy, dx) - angle)));
+          if (diff <= 0.45) {
+            damageEnemy(e, p.atk * 1.08, angle, 90);
+          }
+        }
+      }
+    } else {
+      // 剣・大剣（前方扇形スラッシュ）
+      const arc = style === "cleave" ? 2.1 : 1.45;
+      Game.slashEffects.push({
+        x: p.x, y: p.y, angle, arc, radius: p.range,
+        color: style === "cleave" ? "#f87171" : "#e2e8f0",
+        life: 0.18, maxLife: 0.18
+      });
+      for (const e of [...Game.enemies]) {
+        if (e.hp <= 0) continue;
+        const dx = e.x - p.x;
+        const dy = e.y - p.y;
+        const d = Math.hypot(dx, dy) - e.radius;
+        if (d <= p.range) {
+          const diff = Math.abs(Math.atan2(Math.sin(Math.atan2(dy, dx) - angle), Math.cos(Math.atan2(dy, dx) - angle)));
+          if (diff <= arc * 0.58) {
+            damageEnemy(e, p.atk, Math.atan2(dy, dx), style === "cleave" ? 110 : 70);
+          }
+        }
+      }
+    }
+
+    Game.enemies = Game.enemies.filter(e => e.hp > 0);
+    return true;
+  }
+
+  function triggerActiveSkill() {
+    if (Game.mode !== "playing" || Game.paused || Game.skillCooldown > 0) return;
+    const p = Game.player;
+    Game.skillCooldown = Game.skillMaxCd;
+    const radius = Math.max(145, p.range * 1.35);
+    Game.slashEffects.push({ x: p.x, y: p.y, angle: 0, arc: Math.PI * 2, radius, color: "#fbbf24", life: 0.3, maxLife: 0.3 });
+    Game.screenShake = 0.16;
+
+    for (const e of [...Game.enemies]) {
+      if (e.hp <= 0) continue;
+      const d = Math.hypot(e.x - p.x, e.y - p.y) - e.radius;
+      if (d <= radius) {
+        damageEnemy(e, p.atk * 2.1 + 12, Math.atan2(e.y - p.y, e.x - p.x), 180);
+      }
+    }
+    Game.enemies = Game.enemies.filter(e => e.hp > 0);
+    spawnFloatingText(p.x, p.y - 30, "旋風斬り！", "#fbbf24", 15);
+  }
+
+  function useRecoveryPotion() {
+    if (Game.mode !== "playing" || Game.paused) return;
+    if (Game.potionCharges <= 0 || Game.potionCd > 0) return;
+    const p = Game.player;
+    if (p.hp >= p.maxHp) {
+      showToast("HPは満タンです");
+      return;
+    }
+    Game.potionCharges -= 1;
+    Game.potionCd = 2.0;
+    const heal = Math.round(p.maxHp * 0.45);
+    p.hp = Math.min(p.maxHp, p.hp + heal);
+    spawnParticles(p.x, p.y, "#4ade80", 12);
+    spawnFloatingText(p.x, p.y - 26, `+${heal} HP`, "#4ade80", 16);
+    updateHud();
+  }
+
+  function damagePlayer(rawDmg) {
+    const p = Game.player;
+    const dmg = Math.max(1, Math.round(rawDmg - p.def * 0.65));
+    p.hp -= dmg;
+    p.hitFlash = 0.18;
+    Game.screenShake = 0.12;
+    spawnFloatingText(p.x, p.y - 24, `-${dmg}`, "#ef4444", 15);
+
+    if (p.hp <= 0) {
+      p.hp = 0;
+      handlePlayerDeath();
+    }
+  }
+
+  function handlePlayerDeath() {
+    Game.paused = true;
+    const reached = Game.day;
+    if (reached > SaveManager.data.bestDay) {
+      SaveManager.data.bestDay = reached;
+    }
+    SaveManager.save();
+    checkAchievements();
+
+    document.getElementById("deathReachedDay").textContent = `${reached}日目`;
+    document.getElementById("deathBestDay").textContent = `${SaveManager.data.bestDay}日目`;
+    document.getElementById("deathRunCoins").textContent = `${Game.runCoins}`;
+    document.getElementById("deathTotalCoins").textContent = `${SaveManager.data.coins}`;
+    document.getElementById("deathModal").classList.add("active");
+  }
+
+  function onDayComplete(isDay100BossClear) {
+    const prevArea = getAreaForDay(Game.day);
+    Game.day += 1;
+    Game.dayTimer = 0;
+    Game.bossSpawnedThisDay = false;
+
+    if (Game.day > SaveManager.data.bestDay) {
+      SaveManager.data.bestDay = Game.day;
+    }
+
+    // 日数経過で少し回復＆3日ごとに回復薬補充
+    const p = Game.player;
+    p.hp = Math.min(p.maxHp, p.hp + Math.round(p.maxHp * 0.12));
+    if (Game.day % 3 === 0 && Game.potionCharges < Game.potionMaxCharges) {
+      Game.potionCharges += 1;
+      showToast("🧪 回復薬が1つ補充された！");
+    }
+
+    // 仲間は翌日HP全快で復活
+    for (const c of Game.companions) {
+      c.downed = false;
+      c.hp = c.maxHp;
+    }
+
+    // 150日目以降 50日ごとの仲間救出フック
+    if (Game.day >= 150 && (Game.day - 150) % 50 === 0) {
+      const classKeys = Object.keys(COMPANION_CLASSES);
+      const idx = Math.floor((Game.day - 150) / 50) % classKeys.length;
+      const key = classKeys[idx];
+      if (!SaveManager.data.unlockedCompanions.includes(key)) {
+        SaveManager.data.unlockedCompanions.push(key);
+        spawnSavedCompanions();
+        showToast(`🤝 新たな仲間「${COMPANION_CLASSES[key].name}」を救出した！`);
+      }
+    }
+
+    const nextArea = getAreaForDay(Game.day);
+    if (nextArea.id !== prevArea.id) {
+      showToast(`🗺 新エリア解放: ${nextArea.name}！`);
+    }
+
+    if (isDay100BossClear) {
+      Game.paused = true;
+      document.getElementById("victoryModal").classList.add("active");
+    } else if (Game.day % 10 === 0) {
+      showToast(`⚠️ ${Game.day}日目: ボスが出現する！`);
+    }
+
+    SaveManager.save();
+    checkAchievements();
+  }
+
+  /* --- Main Update Loop --- */
+  function updateGame(dt) {
+    if (Game.mode !== "playing" || Game.paused) return;
+
+    const p = Game.player;
+    Game.elapsedTotal += dt;
+    if (Game.skillCooldown > 0) Game.skillCooldown = Math.max(0, Game.skillCooldown - dt);
+    if (Game.potionCd > 0) Game.potionCd = Math.max(0, Game.potionCd - dt);
+    if (Game.screenShake > 0) Game.screenShake = Math.max(0, Game.screenShake - dt);
+    if (p.hitFlash > 0) p.hitFlash = Math.max(0, p.hitFlash - dt);
+
+    // 定期セーブ（コイン等の保護）
+    Game.lastSaveTick += dt;
+    if (Game.lastSaveTick >= 5) {
+      Game.lastSaveTick = 0;
+      SaveManager.save();
+    }
+
+    // 1. プレイヤー移動
+    let mx = 0, my = 0;
+    if (Input.keys["KeyW"] || Input.keys["ArrowUp"]) my -= 1;
+    if (Input.keys["KeyS"] || Input.keys["ArrowDown"]) my += 1;
+    if (Input.keys["KeyA"] || Input.keys["ArrowLeft"]) mx -= 1;
+    if (Input.keys["KeyD"] || Input.keys["ArrowRight"]) mx += 1;
+    if (Input.joyActive) {
+      mx += Input.joyX;
+      my += Input.joyY;
+    }
+
+    const len = Math.hypot(mx, my);
+    if (len > 0.05) {
+      const nx = mx / Math.max(1, len);
+      const ny = my / Math.max(1, len);
+      p.x += nx * p.moveSpeed * dt;
+      p.y += ny * p.moveSpeed * dt;
+      p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x));
+      p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y));
+      p.facingAngle = Math.atan2(ny, nx);
+      p.walkPhase += dt * 11;
+    }
+
+    // 自動回復
+    if (p.hp < p.maxHp && p.regen > 0) {
+      p.hp = Math.min(p.maxHp, p.hp + p.regen * dt);
+    }
+
+    // プレイヤー自動攻撃
+    p.atkTimer -= dt;
+    if (p.atkTimer <= 0) {
+      if (performPlayerAutoAttack()) {
+        p.atkTimer = 1 / p.atkSpeed;
+      } else {
+        p.atkTimer = 0.05;
+      }
+    }
+
+    // 2. 日数・スポーン進行
+    const isBossDay = Game.day % 10 === 0;
+    if (isBossDay) {
+      if (!Game.bossSpawnedThisDay) {
+        Game.bossSpawnedThisDay = true;
+        spawnEnemy(Game.day === 100 ? "boss_100" : "boss_mid");
+      }
+      // ボス戦中の取り巻き控えめ湧き
+      Game.spawnTimer -= dt;
+      if (Game.spawnTimer <= 0 && Game.enemies.length < 12) {
+        spawnEnemy(pickEnemyTypeForDay(Game.day));
+        Game.spawnTimer = 2.6;
+      }
+    } else {
+      Game.dayTimer += dt;
+      if (Game.dayTimer >= DAY_DURATION) {
+        onDayComplete(false);
+      }
+      Game.spawnTimer -= dt;
+      if (Game.spawnTimer <= 0) {
+        const batch = Math.min(4, 1 + Math.floor(Game.day / 8));
+        for (let i = 0; i < batch; i++) {
+          spawnEnemy(pickEnemyTypeForDay(Game.day));
+        }
+        Game.spawnTimer = Math.max(0.55, 1.85 - Game.day * 0.025);
+      }
+    }
+
+    // 3. 仲間AI更新 (150日目以降の拡張対応)
+    for (const c of Game.companions) {
+      if (c.downed) continue;
+      if (c.hitFlash > 0) c.hitFlash -= dt;
+      c.atkTimer -= dt;
+
+      if (c.role === "僧侶") {
+        // プレイヤーに追従しつつ定期回復
+        const distP = Math.hypot(p.x - c.x, p.y - c.y);
+        if (distP > 75) {
+          const a = Math.atan2(p.y - c.y, p.x - c.x);
+          c.x += Math.cos(a) * c.speed * dt;
+          c.y += Math.sin(a) * c.speed * dt;
+        }
+        if (c.atkTimer <= 0 && p.hp < p.maxHp) {
+          c.atkTimer = c.cd;
+          const heal = Math.round(p.maxHp * 0.08 + 12);
+          p.hp = Math.min(p.maxHp, p.hp + heal);
+          spawnFloatingText(p.x, p.y - 24, `+${heal}`, "#f472b6", 13);
+        }
+      } else {
+        // 最寄りの敵を索敵
+        let target = null;
+        let best = Infinity;
+        for (const e of Game.enemies) {
+          const d = Math.hypot(e.x - c.x, e.y - c.y);
+          if (d < best) { best = d; target = e; }
+        }
+        if (target && best > c.range * 0.85) {
+          const a = Math.atan2(target.y - c.y, target.x - c.x);
+          c.x += Math.cos(a) * c.speed * dt;
+          c.y += Math.sin(a) * c.speed * dt;
+        } else if (!target) {
+          const distP = Math.hypot(p.x - c.x, p.y - c.y);
+          if (distP > 85) {
+            const a = Math.atan2(p.y - c.y, p.x - c.x);
+            c.x += Math.cos(a) * c.speed * dt;
+            c.y += Math.sin(a) * c.speed * dt;
+          }
+        }
+        if (target && best <= c.range + target.radius && c.atkTimer <= 0) {
+          c.atkTimer = c.cd;
+          const a = Math.atan2(target.y - c.y, target.x - c.x);
+          if (c.role === "弓使い" || c.role === "魔法使い") {
+            Game.projectiles.push({
+              fromPlayer: true, x: c.x, y: c.y,
+              vx: Math.cos(a) * 440, vy: Math.sin(a) * 440,
+              radius: 6, dmg: c.atk, aoe: c.role === "魔法使い" ? 48 : 0,
+              color: c.color, life: 1.0
+            });
+          } else {
+            damageEnemy(target, c.atk, a, 50);
+          }
+        }
+      }
+    }
+
+    // 4. モンスターAI・戦闘更新
+    for (const e of Game.enemies) {
+      if (e.hp <= 0) continue;
+      if (e.hitFlash > 0) e.hitFlash -= dt;
+      e.bobPhase += dt * 7;
+
+      // ターゲット決定（騎士仲間がいれば近い場合に引きつけ）
+      let targetObj = p;
+      let targetIsCompanion = false;
+      for (const c of Game.companions) {
+        if (!c.downed && c.role === "騎士") {
+          const dC = Math.hypot(c.x - e.x, c.y - e.y);
+          const dP = Math.hypot(p.x - e.x, p.y - e.y);
+          if (dC < dP && dC < 240) {
+            targetObj = c;
+            targetIsCompanion = true;
+          }
+        }
+      }
+
+      const dx = targetObj.x - e.x;
+      const dy = targetObj.y - e.y;
+      const dist = Math.hypot(dx, dy) || 1;
+      const nx = dx / dist;
+      const ny = dy / dist;
+
+      // ボス・強敵の特殊攻撃
+      if (e.isBoss) {
+        e.specialTimer -= dt;
+        if (e.telegraph) {
+          e.telegraph.timer -= dt;
+          if (e.telegraph.timer <= 0) {
+            // 範囲着弾
+            const td = Math.hypot(p.x - e.telegraph.x, p.y - e.telegraph.y);
+            if (td <= e.telegraph.radius + p.radius) {
+              damagePlayer(e.atk * 1.45);
+            }
+            spawnParticles(e.telegraph.x, e.telegraph.y, "#ef4444", 16);
+            e.telegraph = null;
+          }
+        } else if (e.specialTimer <= 0) {
+          e.specialTimer = e.isFinalBoss ? 2.8 : 3.8;
+          // 予兆円 + 全方位弾
+          e.telegraph = { x: p.x, y: p.y, radius: 68, timer: 0.95, maxTimer: 0.95 };
+          const count = e.isFinalBoss ? 10 : 6;
+          for (let i = 0; i < count; i++) {
+            const a = (Math.PI * 2 * i) / count;
+            Game.projectiles.push({
+              fromPlayer: false, x: e.x, y: e.y,
+              vx: Math.cos(a) * 210, vy: Math.sin(a) * 210,
+              radius: 7, dmg: e.atk * 0.9, aoe: 0, color: "#f43f5e", life: 2.0
+            });
+          }
+        }
+      }
+
+      // 移動と攻撃
+      const stopDist = e.shoots ? e.attackRange * 0.8 : e.radius + targetObj.radius - 2;
+      if (dist > stopDist) {
+        e.x += nx * e.speed * dt;
+        e.y += ny * e.speed * dt;
+      }
+
+      e.atkTimer -= dt;
+      if (dist <= e.attackRange + targetObj.radius && e.atkTimer <= 0) {
+        e.atkTimer = e.atkCd;
+        if (e.shoots && dist > e.radius + targetObj.radius + 15) {
+          Game.projectiles.push({
+            fromPlayer: false, x: e.x, y: e.y,
+            vx: nx * 240, vy: ny * 240,
+            radius: 6, dmg: e.atk, aoe: 0, color: "#c084fc", life: 1.8
+          });
+        } else if (dist <= e.radius + targetObj.radius + 14) {
+          if (targetIsCompanion) {
+            targetObj.hp -= Math.max(1, Math.round(e.atk - targetObj.def));
+            targetObj.hitFlash = 0.14;
+            if (targetObj.hp <= 0) {
+              targetObj.hp = 0;
+              targetObj.downed = true;
+              showToast(`⚠️ ${targetObj.name}が戦闘離脱（翌日復活）`);
+            }
+          } else {
+            damagePlayer(e.atk);
+          }
+        }
+      }
+    }
+
+    // 敵同士の軽い押し出し（重なり防止）
+    const eCount = Game.enemies.length;
+    for (let i = 0; i < eCount; i++) {
+      const a = Game.enemies[i];
+      for (let j = i + 1; j < eCount; j++) {
+        const b = Game.enemies[j];
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const minD = a.radius + b.radius;
+        const d2 = dx * dx + dy * dy;
+        if (d2 > 0 && d2 < minD * minD) {
+          const d = Math.sqrt(d2);
+          const push = (minD - d) * 0.35;
+          const px = (dx / d) * push;
+          const py = (dy / d) * push;
+          if (!a.isBoss) { a.x -= px; a.y -= py; }
+          if (!b.isBoss) { b.x += px; b.y += py; }
+        }
+      }
+    }
+
+    // 5. 飛び道具更新
+    for (const proj of Game.projectiles) {
+      proj.x += proj.vx * dt;
+      proj.y += proj.vy * dt;
+      proj.life -= dt;
+      if (proj.life <= 0) continue;
+
+      if (proj.fromPlayer) {
+        for (const e of Game.enemies) {
+          if (e.hp <= 0) continue;
+          if (Math.hypot(e.x - proj.x, e.y - proj.y) <= e.radius + proj.radius) {
+            if (proj.aoe > 0) {
+              spawnParticles(proj.x, proj.y, proj.color, 10);
+              for (const sub of [...Game.enemies]) {
+                if (sub.hp > 0 && Math.hypot(sub.x - proj.x, sub.y - proj.y) <= proj.aoe + sub.radius) {
+                  damageEnemy(sub, proj.dmg, Math.atan2(sub.y - proj.y, sub.x - proj.x), 55);
+                }
+              }
+            } else {
+              damageEnemy(e, proj.dmg, Math.atan2(proj.vy, proj.vx), 45);
+            }
+            proj.life = 0;
+            break;
+          }
+        }
+      } else {
+        if (Math.hypot(p.x - proj.x, p.y - proj.y) <= p.radius + proj.radius) {
+          damagePlayer(proj.dmg);
+          proj.life = 0;
+        }
+      }
+    }
+    Game.projectiles = Game.projectiles.filter(pr => pr.life > 0);
+    Game.enemies = Game.enemies.filter(e => e.hp > 0);
+
+    // 6. エフェクト更新
+    for (const s of Game.slashEffects) s.life -= dt;
+    Game.slashEffects = Game.slashEffects.filter(s => s.life > 0);
+
+    for (const pt of Game.particles) {
+      pt.x += pt.vx * dt;
+      pt.y += pt.vy * dt;
+      pt.life -= dt;
+    }
+    Game.particles = Game.particles.filter(pt => pt.life > 0);
+
+    for (const ft of Game.floatingTexts) {
+      ft.y -= 32 * dt;
+      ft.life -= dt;
+    }
+    Game.floatingTexts = Game.floatingTexts.filter(ft => ft.life > 0);
+
+    // カメラ追従
+    Game.camera.x += (p.x - Game.camera.x) * Math.min(1, dt * 10);
+    Game.camera.y += (p.y - Game.camera.y) * Math.min(1, dt * 10);
+
+    updateHud();
+  }
+
+  /* --- Canvas Rendering --- */
+  function renderGame() {
+    const w = canvas.width;
+    const h = canvas.height;
+    ctx.clearRect(0, 0, w, h);
+
+    if (Game.mode !== "playing" || !Game.player) {
+      // 拠点背景の待機描画
+      ctx.fillStyle = "#0b0f19";
+      ctx.fillRect(0, 0, w, h);
+      return;
+    }
+
+    const area = getAreaForDay(Game.day);
+    const shakeX = Game.screenShake > 0 ? (Math.random() - 0.5) * 9 : 0;
+    const shakeY = Game.screenShake > 0 ? (Math.random() - 0.5) * 9 : 0;
+    const camX = Game.camera.x - w / 2 + shakeX;
+    const camY = Game.camera.y - h / 2 + shakeY;
+
+    // 背景とタイル
+    ctx.fillStyle = area.bg;
+    ctx.fillRect(0, 0, w, h);
+
+    ctx.save();
+    ctx.translate(-camX, -camY);
+
+    const tileSize = 96;
+    const startX = Math.max(0, Math.floor(camX / tileSize) * tileSize);
+    const endX = Math.min(ARENA_SIZE, camX + w + tileSize);
+    const startY = Math.max(0, Math.floor(camY / tileSize) * tileSize);
+    const endY = Math.min(ARENA_SIZE, camY + h + tileSize);
+
+    ctx.strokeStyle = area.tile;
+    ctx.lineWidth = 2;
+    for (let tx = startX; tx <= endX; tx += tileSize) {
+      ctx.beginPath();
+      ctx.moveTo(tx, startY);
+      ctx.lineTo(tx, endY);
+      ctx.stroke();
+    }
+    for (let ty = startY; ty <= endY; ty += tileSize) {
+      ctx.beginPath();
+      ctx.moveTo(startX, ty);
+      ctx.lineTo(endX, ty);
+      ctx.stroke();
+    }
+
+    // 地面プロップ（草・結晶・岩など）
+    for (const gp of Game.groundProps) {
+      if (gp.x < camX - 40 || gp.x > camX + w + 40 || gp.y < camY - 40 || gp.y > camY + h + 40) continue;
+      ctx.fillStyle = gp.kind === 0 ? area.accent : (gp.kind === 1 ? area.tile : area.particle + "33");
+      ctx.beginPath();
+      ctx.arc(gp.x, gp.y, gp.size * 0.5, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // アリーナ境界線
+    ctx.strokeStyle = "#ef444488";
+    ctx.lineWidth = 6;
+    ctx.strokeRect(16, 16, ARENA_SIZE - 32, ARENA_SIZE - 32);
+
+    // プレイヤー攻撃範囲の薄リング
+    const p = Game.player;
+    ctx.strokeStyle = "rgba(255, 255, 255, 0.08)";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y, p.range, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // ボスの範囲攻撃予兆
+    for (const e of Game.enemies) {
+      if (e.telegraph) {
+        const prog = 1 - e.telegraph.timer / e.telegraph.maxTimer;
+        ctx.fillStyle = "rgba(239, 68, 68, 0.22)";
+        ctx.beginPath();
+        ctx.arc(e.telegraph.x, e.telegraph.y, e.telegraph.radius, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.strokeStyle = "#ef4444";
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(e.telegraph.x, e.telegraph.y, e.telegraph.radius * prog, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+
+    // 斬撃エフェクト
+    for (const s of Game.slashEffects) {
+      const alpha = s.life / s.maxLife;
+      ctx.save();
+      ctx.globalAlpha = alpha * 0.75;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      if (s.arc >= Math.PI * 1.99) {
+        ctx.arc(s.x, s.y, s.radius, 0, Math.PI * 2);
+      } else {
+        ctx.moveTo(s.x, s.y);
+        ctx.arc(s.x, s.y, s.radius, s.angle - s.arc / 2, s.angle + s.arc / 2);
+        ctx.closePath();
+      }
+      ctx.fill();
+      ctx.restore();
+    }
+
+    // 仲間描画
+    for (const c of Game.companions) {
+      if (c.downed) continue;
+      drawCharacterSprite(c.x, c.y, 14, c.hitFlash > 0 ? "#fff" : c.color, "#0f172a", c.role[0]);
+      drawSmallHpBar(c.x, c.y - 22, 28, c.hp / c.maxHp, "#38bdf8");
+    }
+
+    // モンスター描画（固有ビジュアル）
+    for (const e of Game.enemies) {
+      if (e.x < camX - 80 || e.x > camX + w + 80 || e.y < camY - 80 || e.y > camY + h + 80) continue;
+      drawMonsterSprite(e);
+    }
+
+    // プレイヤー描画
+    drawPlayerSprite(p);
+
+    // 飛び道具描画
+    for (const pr of Game.projectiles) {
+      ctx.fillStyle = pr.color;
+      ctx.beginPath();
+      ctx.arc(pr.x, pr.y, pr.radius, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    // パーティクル
+    for (const pt of Game.particles) {
+      ctx.globalAlpha = Math.max(0, pt.life / pt.maxLife);
+      ctx.fillStyle = pt.color;
+      ctx.beginPath();
+      ctx.arc(pt.x, pt.y, pt.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+
+    // ダメージ・コインテキスト
+    ctx.textAlign = "center";
+    for (const ft of Game.floatingTexts) {
+      ctx.globalAlpha = Math.min(1, ft.life / 0.35);
+      ctx.font = `800 ${ft.size}px system-ui, sans-serif`;
+      ctx.fillStyle = "#000";
+      ctx.fillText(ft.text, ft.x + 1, ft.y + 1);
+      ctx.fillStyle = ft.color;
+      ctx.fillText(ft.text, ft.x, ft.y);
+    }
+    ctx.globalAlpha = 1;
+
+    ctx.restore();
+  }
+
+  function drawSmallHpBar(x, y, w, ratio, color = "#ef4444") {
+    ctx.fillStyle = "rgba(0,0,0,0.65)";
+    ctx.fillRect(x - w / 2, y, w, 4);
+    ctx.fillStyle = color;
+    ctx.fillRect(x - w / 2, y, w * Math.max(0, Math.min(1, ratio)), 4);
+  }
+
+  function drawCharacterSprite(x, y, r, bodyColor, trimColor, label) {
+    ctx.fillStyle = "rgba(0,0,0,0.32)";
+    ctx.beginPath();
+    ctx.ellipse(x, y + r * 0.85, r * 0.9, r * 0.4, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.fillStyle = bodyColor;
+    ctx.strokeStyle = trimColor;
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#fff";
+    ctx.font = "bold 10px sans-serif";
+    ctx.textAlign = "center";
+    ctx.fillText(label, x, y + 3.5);
+  }
+
+  function drawPlayerSprite(p) {
+    const bob = Math.sin(p.walkPhase) * 2;
+    // 影
+    ctx.fillStyle = "rgba(0,0,0,0.38)";
+    ctx.beginPath();
+    ctx.ellipse(p.x, p.y + 15, 15, 7, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // マント
+    ctx.fillStyle = p.hitFlash > 0 ? "#fff" : "#dc2626";
+    ctx.beginPath();
+    ctx.arc(p.x - Math.cos(p.facingAngle) * 4, p.y - Math.sin(p.facingAngle) * 4 + bob, 15, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 胴体・兜
+    ctx.fillStyle = p.hitFlash > 0 ? "#fff" : "#38bdf8";
+    ctx.strokeStyle = "#0f172a";
+    ctx.lineWidth = 2.5;
+    ctx.beginPath();
+    ctx.arc(p.x, p.y + bob, p.radius - 2, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+
+    // 目の向き
+    const ex = p.x + Math.cos(p.facingAngle) * 6;
+    const ey = p.y + Math.sin(p.facingAngle) * 6 + bob;
+    ctx.fillStyle = "#fde68a";
+    ctx.beginPath();
+    ctx.arc(ex, ey, 4.5, 0, Math.PI * 2);
+    ctx.fill();
+
+    // 武器ビジュアル
+    const wx = p.x + Math.cos(p.facingAngle) * 18;
+    const wy = p.y + Math.sin(p.facingAngle) * 18 + bob;
+    ctx.strokeStyle = "#f8fafc";
+    ctx.lineWidth = 3.5;
+    ctx.beginPath();
+    ctx.moveTo(p.x + Math.cos(p.facingAngle) * 10, p.y + Math.sin(p.facingAngle) * 10 + bob);
+    ctx.lineTo(wx + Math.cos(p.facingAngle) * 10, wy + Math.sin(p.facingAngle) * 10);
+    ctx.stroke();
+  }
+
+  function drawMonsterSprite(e) {
+    const bob = Math.sin(e.bobPhase) * 2.5;
+    const flash = e.hitFlash > 0;
+    const r = e.radius;
+
+    // 影
+    ctx.fillStyle = "rgba(0,0,0,0.35)";
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y + r * 0.85, r * 0.95, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    if (e.id === "slime") {
+      // スライム：ぷるっとした半円ゼリー
+      ctx.fillStyle = flash ? "#fff" : e.color;
+      ctx.strokeStyle = "#14532d";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.ellipse(e.x, e.y + 3 + bob * 0.6, r, r * 0.82, 0, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      // 目
+      ctx.fillStyle = "#0f172a";
+      ctx.fillRect(e.x - 6, e.y - 1 + bob * 0.6, 3, 4);
+      ctx.fillRect(e.x + 3, e.y - 1 + bob * 0.6, 3, 4);
+    } else if (e.id === "goblin") {
+      // ゴブリン：尖った耳と赤い目
+      ctx.fillStyle = flash ? "#fff" : e.color;
+      ctx.strokeStyle = "#1a2e05";
+      ctx.lineWidth = 2;
+      // 耳
+      ctx.beginPath();
+      ctx.moveTo(e.x - r, e.y - 4 + bob);
+      ctx.lineTo(e.x - r - 7, e.y - 10 + bob);
+      ctx.lineTo(e.x - r + 4, e.y + 3 + bob);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(e.x + r, e.y - 4 + bob);
+      ctx.lineTo(e.x + r + 7, e.y - 10 + bob);
+      ctx.lineTo(e.x + r - 4, e.y + 3 + bob);
+      ctx.fill();
+      // 体
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + bob, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#ef4444";
+      ctx.fillRect(e.x - 6, e.y - 3 + bob, 4, 3);
+      ctx.fillRect(e.x + 2, e.y - 3 + bob, 4, 3);
+    } else if (e.id === "skeleton") {
+      // スケルトン：頭蓋骨＋盾輪郭
+      ctx.fillStyle = flash ? "#fff" : "#f1f5f9";
+      ctx.strokeStyle = "#334155";
+      ctx.lineWidth = 2.5;
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + bob * 0.5, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+      ctx.fillStyle = "#0f172a";
+      ctx.beginPath();
+      ctx.arc(e.x - 5, e.y - 2 + bob * 0.5, 3.2, 0, Math.PI * 2);
+      ctx.arc(e.x + 5, e.y - 2 + bob * 0.5, 3.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillRect(e.x - 5, e.y + 6 + bob * 0.5, 10, 3);
+    } else {
+      // 強敵 / ボス：角付き装甲シルエット
+      ctx.fillStyle = flash ? "#fff" : e.color;
+      ctx.strokeStyle = e.isBoss ? "#fde047" : "#3b0764";
+      ctx.lineWidth = e.isBoss ? 3.5 : 2.5;
+      // 角
+      ctx.beginPath();
+      ctx.moveTo(e.x - r * 0.6, e.y - r * 0.5);
+      ctx.lineTo(e.x - r * 0.95, e.y - r * 1.25);
+      ctx.lineTo(e.x - r * 0.15, e.y - r * 0.85);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.moveTo(e.x + r * 0.6, e.y - r * 0.5);
+      ctx.lineTo(e.x + r * 0.95, e.y - r * 1.25);
+      ctx.lineTo(e.x + r * 0.15, e.y - r * 0.85);
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(e.x, e.y + bob * 0.4, r, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#fef08a";
+      ctx.beginPath();
+      ctx.arc(e.x - r * 0.3, e.y - 3, r * 0.15, 0, Math.PI * 2);
+      ctx.arc(e.x + r * 0.3, e.y - 3, r * 0.15, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    if (!e.isBoss && e.hp < e.maxHp) {
+      drawSmallHpBar(e.x, e.y - r - 9, r * 2, e.hp / e.maxHp);
+    }
+  }
+
+  /* =========================================================================
+   * 5. UI & SCREEN MANAGEMENT
+   * ========================================================================= */
+  function updateHud() {
+    if (Game.mode !== "playing" || !Game.player) return;
+    const p = Game.player;
+    const area = getAreaForDay(Game.day);
+
+    document.getElementById("hudLv").textContent = `Lv.${p.level}`;
+    document.getElementById("hudCoins").textContent = `🪙 ${SaveManager.data.coins}`;
+    document.getElementById("hudHpBar").style.width = `${Math.max(0, (p.hp / p.maxHp) * 100)}%`;
+    document.getElementById("hudHpText").textContent = `${Math.ceil(p.hp)} / ${p.maxHp}`;
+    document.getElementById("hudXpBar").style.width = `${Math.min(100, (p.xp / p.nextXp) * 100)}%`;
+    document.getElementById("hudXpText").textContent = `${p.xp} / ${p.nextXp}`;
+
+    const modeTag = Game.day > 100 ? " [エンドレス]" : "";
+    document.getElementById("hudDay").textContent = `${Game.day}日目${modeTag}`;
+    document.getElementById("hudArea").textContent = area.name;
+
+    const isBossDay = Game.day % 10 === 0;
+    document.getElementById("hudDayBar").style.width = isBossDay ? "100%" : `${Math.min(100, (Game.dayTimer / DAY_DURATION) * 100)}%`;
+
+    const sec = Math.floor(Game.elapsedTotal);
+    const mm = String(Math.floor(sec / 60)).padStart(2, "0");
+    const ss = String(sec % 60).padStart(2, "0");
+    document.getElementById("hudTime").textContent = `${mm}:${ss}`;
+
+    // ボスHPバー
+    const boss = Game.enemies.find(e => e.isBoss);
+    const bossBox = document.getElementById("bossBarContainer");
+    if (boss) {
+      bossBox.classList.add("active");
+      document.getElementById("bossNameLabel").textContent = `${boss.name} (HP: ${Math.max(0, Math.ceil(boss.hp))})`;
+      document.getElementById("bossHpBar").style.width = `${Math.max(0, (boss.hp / boss.maxHp) * 100)}%`;
+    } else {
+      bossBox.classList.remove("active");
+    }
+
+    // 下部スロット
+    const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
+    document.getElementById("hudWeaponName").textContent = weapon ? weapon.name : "素手";
+
+    const cdOverlay = document.getElementById("skillCooldownOverlay");
+    if (Game.skillCooldown > 0) {
+      cdOverlay.style.display = "flex";
+      cdOverlay.textContent = `${Math.ceil(Game.skillCooldown)}s`;
+    } else {
+      cdOverlay.style.display = "none";
+    }
+    document.getElementById("hudPotionCount").textContent = `残 ${Game.potionCharges} (Q)`;
+    document.getElementById("btnUsePotion").classList.toggle("disabled", Game.potionCharges <= 0);
+  }
+
+  /* --- Level Up Modal --- */
+  function showLevelUpModal() {
+    Game.paused = true;
+    const pool = [...LEVEL_UP_PERKS];
+    const picks = [];
+    while (picks.length < 3 && pool.length > 0) {
+      const idx = Math.floor(Math.random() * pool.length);
+      picks.push(pool.splice(idx, 1)[0]);
+    }
+
+    document.getElementById("levelUpTitle").textContent = `LEVEL UP! (Lv.${Game.player.level}) — 強化を1つ選択`;
+    const box = document.getElementById("levelUpChoices");
+    box.innerHTML = "";
+
+    for (const perk of picks) {
+      const btn = document.createElement("button");
+      btn.className = "perk-card";
+      btn.innerHTML = `<h3>${perk.title}</h3><p>${perk.desc}</p>`;
+      btn.onclick = () => {
+        perk.apply(Game.player);
+        recalculatePlayerStats();
+        document.getElementById("levelUpModal").classList.remove("active");
+        // 複数レベル同時上昇にも対応
+        if (Game.player.xp >= Game.player.nextXp) {
+          checkLevelUp();
+        } else {
+          Game.paused = false;
+        }
+      };
+      box.appendChild(btn);
+    }
+
+    document.getElementById("levelUpModal").classList.add("active");
+  }
+
+  /* --- Shared Shop / Equip / Bestiary UI Builders --- */
+  let activeShopCategory = "すべて";
+
+  function formatItemStats(stats) {
+    if (!stats) return "";
+    const labels = {
+      atk: "攻撃力", maxHp: "最大HP", def: "防御力",
+      atkSpeed: "攻撃速度", moveSpeed: "移動速度", regen: "自動回復"
+    };
+    return Object.entries(stats)
+      .filter(([, v]) => v !== 0)
+      .map(([k, v]) => `${labels[k] || k} ${v > 0 ? "+" : ""}${v}`)
+      .join(" / ");
+  }
+
+  function renderShopView(container, onUpdateCallback) {
+    container.innerHTML = "";
+    const catRow = document.createElement("div");
+    catRow.className = "tab-row";
+    catRow.style.marginBottom = "10px";
+
+    for (const cat of ["すべて", ...EQUIP_CATEGORIES]) {
+      const b = document.createElement("button");
+      b.className = `tab-btn ${activeShopCategory === cat ? "active" : ""}`;
+      b.textContent = cat;
+      b.onclick = () => {
+        activeShopCategory = cat;
+        renderShopView(container, onUpdateCallback);
+      };
+      catRow.appendChild(b);
+    }
+    container.appendChild(catRow);
+
+    const grid = document.createElement("div");
+    grid.className = "grid-cards";
+
+    const filtered = activeShopCategory === "すべて"
+      ? EQUIPMENT_DB
+      : EQUIPMENT_DB.filter(item => item.category === activeShopCategory);
+
+    for (const item of filtered) {
+      const owned = SaveManager.data.ownedEquipment.includes(item.id);
+      const slot = CATEGORY_TO_SLOT[item.category];
+      const equipped = SaveManager.data.equipped[slot] === item.id;
+
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div>
+          <div class="item-title">
+            <span class="rarity-${item.rarity}">${item.icon} ${item.name}</span>
+            <span class="tag">${item.category}</span>
+          </div>
+          <div class="item-meta" style="margin-top:4px;">
+            <span class="rarity-${item.rarity}">[${item.rarity}]</span><br>
+            ${formatItemStats(item.stats)}<br>
+            <span style="color:#94a3b8;">${item.desc}</span>
+          </div>
+        </div>
+      `;
+
+      const btn = document.createElement("button");
+      if (owned) {
+        btn.className = `btn btn-sm ${equipped ? "btn-success" : ""}`;
+        btn.textContent = equipped ? "✓ 購入済み (装備中)" : "購入済み・装備する";
+        btn.onclick = () => {
+          SaveManager.data.equipped[slot] = item.id;
+          SaveManager.save();
+          if (Game.mode === "playing") recalculatePlayerStats();
+          showToast(`${item.name}を装備しました`);
+          onUpdateCallback();
+        };
+      } else {
+        const canAfford = SaveManager.data.coins >= item.price;
+        btn.className = `btn btn-sm ${canAfford ? "btn-primary" : ""}`;
+        btn.disabled = !canAfford;
+        btn.textContent = `🪙 ${item.price} で購入`;
+        btn.onclick = () => {
+          if (SaveManager.data.coins < item.price) return;
+          SaveManager.data.coins -= item.price;
+          SaveManager.data.ownedEquipment.push(item.id);
+          SaveManager.data.equipped[slot] = item.id;
+          SaveManager.save();
+          checkAchievements();
+          if (Game.mode === "playing") recalculatePlayerStats();
+          showToast(`${item.name}を購入・装備しました！`);
+          onUpdateCallback();
+        };
+      }
+      card.appendChild(btn);
+      grid.appendChild(card);
+    }
+
+    container.appendChild(grid);
+  }
+
+  function renderEquipView(container, onUpdateCallback) {
+    container.innerHTML = "";
+
+    // 現在の装備スロット一覧
+    const slotTitle = document.createElement("h3");
+    slotTitle.textContent = "現在の装備";
+    slotTitle.style.margin = "0 0 8px";
+    container.appendChild(slotTitle);
+
+    const slotGrid = document.createElement("div");
+    slotGrid.className = "slot-grid";
+    for (const [slotKey, label] of Object.entries(SLOT_LABELS)) {
+      const id = SaveManager.data.equipped[slotKey];
+      const item = getEquipmentById(id);
+      const box = document.createElement("div");
+      box.className = "slot-box";
+      box.innerHTML = `<strong>${label}</strong>` + (item
+        ? `<span class="rarity-${item.rarity}">${item.icon} ${item.name}</span>`
+        : `<span style="color:#64748b;">未装備</span>`);
+      slotGrid.appendChild(box);
+    }
+    container.appendChild(slotGrid);
+
+    const ownedTitle = document.createElement("h3");
+    ownedTitle.textContent = "所持している装備";
+    ownedTitle.style.margin = "14px 0 8px";
+    container.appendChild(ownedTitle);
+
+    const grid = document.createElement("div");
+    grid.className = "grid-cards";
+
+    for (const id of SaveManager.data.ownedEquipment) {
+      const item = getEquipmentById(id);
+      if (!item) continue;
+      const slot = CATEGORY_TO_SLOT[item.category];
+      const isEq = SaveManager.data.equipped[slot] === item.id;
+
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div>
+          <div class="item-title">
+            <span class="rarity-${item.rarity}">${item.icon} ${item.name}</span>
+            <span class="tag">${item.category}</span>
+          </div>
+          <div class="item-meta" style="margin-top:4px;">${formatItemStats(item.stats)}</div>
+        </div>
+      `;
+
+      const btn = document.createElement("button");
+      btn.className = `btn btn-sm ${isEq ? "btn-success" : "btn-primary"}`;
+      btn.textContent = isEq ? "装備中" : "装備する";
+      btn.disabled = isEq;
+      btn.onclick = () => {
+        SaveManager.data.equipped[slot] = item.id;
+        SaveManager.save();
+        if (Game.mode === "playing") recalculatePlayerStats();
+        showToast(`${item.name}を装備しました`);
+        onUpdateCallback();
+      };
+      card.appendChild(btn);
+      grid.appendChild(card);
+    }
+    container.appendChild(grid);
+  }
+
+  function renderPermUpgradesView(container, onUpdateCallback) {
+    container.innerHTML = `<p style="margin:0 0 10px; font-size:0.86rem; color:var(--muted);">コインを使って基礎能力を恒久強化します。死亡しても強化は維持されます。</p>`;
+    const grid = document.createElement("div");
+    grid.className = "grid-cards";
+
+    for (const up of PERM_UPGRADES_DB) {
+      const lv = SaveManager.data.permUpgrades[up.id] || 0;
+      const isMax = lv >= up.maxLv;
+      const cost = getPermUpgradeCost(up, lv);
+      const canAfford = !isMax && SaveManager.data.coins >= cost;
+      const bonusVal = Number((lv * up.perLv).toFixed(2));
+
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div>
+          <div class="item-title">
+            <span>${up.icon} ${up.name}</span>
+            <span class="tag">Lv.${lv} / ${up.maxLv}</span>
+          </div>
+          <div class="item-meta" style="margin-top:4px;">
+            現在ボーナス: <strong style="color:#4ade80;">+${bonusVal}${up.unit}</strong><br>
+            ${up.desc}
+          </div>
+        </div>
+      `;
+
+      const btn = document.createElement("button");
+      btn.className = `btn btn-sm ${canAfford ? "btn-primary" : ""}`;
+      btn.disabled = !canAfford;
+      btn.textContent = isMax ? "MAX" : `🪙 ${cost} で強化`;
+      btn.onclick = () => {
+        if (isMax || SaveManager.data.coins < cost) return;
+        SaveManager.data.coins -= cost;
+        SaveManager.data.permUpgrades[up.id] = lv + 1;
+        SaveManager.save();
+        checkAchievements();
+        showToast(`${up.name} Lv.${lv + 1} に強化！`);
+        onUpdateCallback();
+      };
+      card.appendChild(btn);
+      grid.appendChild(card);
+    }
+
+    container.appendChild(grid);
+  }
+
+  function renderBestiaryAndRecords(container) {
+    const s = SaveManager.data;
+    const base = getBaseHubStats();
+    container.innerHTML = `
+      <div class="stat-list" style="margin-bottom:12px;">
+        <div class="stat-box"><span>最高到達日数</span><strong>${s.bestDay}日</strong></div>
+        <div class="stat-box"><span>累計討伐数</span><strong>${s.stats.totalKills}体</strong></div>
+        <div class="stat-box"><span>冒険回数</span><strong>${s.stats.totalRuns}回</strong></div>
+        <div class="stat-box"><span>コイン倍率</span><strong>${Math.round(base.coinMult * 100)}%</strong></div>
+      </div>
+      <h3 style="margin:8px 0;">モンスター図鑑</h3>
+      <div class="grid-cards" id="bestiaryGrid"></div>
+      <h3 style="margin:14px 0 8px;">実績 (${s.achievements.length} / ${ACHIEVEMENTS_DB.length})</h3>
+      <div class="grid-cards" id="achGrid"></div>
+      <div style="margin-top:16px; text-align:right;">
+        <button class="btn btn-sm btn-danger" id="btnResetSaveData">セーブデータ初期化</button>
+      </div>
+    `;
+
+    const bGrid = container.querySelector("#bestiaryGrid");
+    for (const m of Object.values(MONSTERS_DB)) {
+      const kills = s.bestiary[m.id] || 0;
+      const discovered = kills > 0;
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.innerHTML = `
+        <div class="item-title">
+          <span style="color:${discovered ? m.color : "#64748b"};">${discovered ? m.name : "？？？"}</span>
+          <span class="tag">${m.type}</span>
+        </div>
+        <div class="item-meta">
+          討伐数: <strong>${kills}</strong><br>
+          ${discovered ? m.desc : "未遭遇のモンスター。冒険を進めて発見しよう。"}
+        </div>
+      `;
+      bGrid.appendChild(card);
+    }
+
+    const aGrid = container.querySelector("#achGrid");
+    for (const ach of ACHIEVEMENTS_DB) {
+      const done = s.achievements.includes(ach.id);
+      const card = document.createElement("div");
+      card.className = "item-card";
+      card.style.borderColor = done ? "var(--gold)" : "#334155";
+      card.innerHTML = `
+        <div class="item-title">
+          <span>${done ? "🏅" : "🔒"} ${ach.name}</span>
+          <span class="tag">${done ? "達成" : "未達成"}</span>
+        </div>
+        <div class="item-meta">${ach.desc}</div>
+      `;
+      aGrid.appendChild(card);
+    }
+
+    container.querySelector("#btnResetSaveData").onclick = () => {
+      if (confirm("本当にすべてのセーブデータ（コイン・装備・恒久強化・最高記録）を初期化しますか？")) {
+        SaveManager.resetAll();
+        renderHub();
+        showToast("セーブデータを初期化しました");
+      }
+    };
+  }
+
+  /* --- Hub Screen Tabs --- */
+  let activeHubTab = "shop";
+
+  function renderHub() {
+    const s = SaveManager.data;
+    const base = getBaseHubStats();
+    document.getElementById("hubCoins").textContent = s.coins;
+    document.getElementById("hubBestDay").textContent = `${s.bestDay}日`;
+    document.getElementById("hubPower").textContent = Math.round(base.atk * 2 + base.maxHp * 0.3 + base.def * 3);
+
+    const panel = document.getElementById("hubPanelContent");
+    if (activeHubTab === "shop") {
+      renderShopView(panel, renderHub);
+    } else if (activeHubTab === "upgrade") {
+      renderPermUpgradesView(panel, renderHub);
+    } else if (activeHubTab === "equip") {
+      renderEquipView(panel, renderHub);
+    } else if (activeHubTab === "record") {
+      renderBestiaryAndRecords(panel);
+    }
+  }
+
+  /* --- In-Game Menu Modal --- */
+  let activeGameMenuTab = "stats";
+
+  function openGameMenu(tab = "stats") {
+    if (Game.mode !== "playing") return;
+    Game.paused = true;
+    activeGameMenuTab = tab;
+    renderGameMenu();
+    document.getElementById("gameMenuModal").classList.add("active");
+  }
+
+  function closeGameMenu() {
+    document.getElementById("gameMenuModal").classList.remove("active");
+    if (!document.getElementById("levelUpModal").classList.contains("active") &&
+        !document.getElementById("deathModal").classList.contains("active") &&
+        !document.getElementById("victoryModal").classList.contains("active")) {
+      Game.paused = false;
+    }
+  }
+
+  function renderGameMenu() {
+    document.querySelectorAll("#gameMenuTabs .tab-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.tab === activeGameMenuTab);
+    });
+
+    const content = document.getElementById("gameMenuContent");
+    const p = Game.player;
+    if (!p) return;
+
+    if (activeGameMenuTab === "stats") {
+      content.innerHTML = `
+        <div class="stat-list">
+          <div class="stat-box"><span>レベル</span><strong>Lv.${p.level}</strong></div>
+          <div class="stat-box"><span>HP</span><strong>${Math.ceil(p.hp)} / ${p.maxHp}</strong></div>
+          <div class="stat-box"><span>攻撃力</span><strong>${p.atk}</strong></div>
+          <div class="stat-box"><span>防御力</span><strong>${p.def}</strong></div>
+          <div class="stat-box"><span>攻撃速度</span><strong>${p.atkSpeed}/秒</strong></div>
+          <div class="stat-box"><span>移動速度</span><strong>${p.moveSpeed}</strong></div>
+          <div class="stat-box"><span>自動回復</span><strong>+${p.regen}/秒</strong></div>
+          <div class="stat-box"><span>攻撃範囲</span><strong>${p.range}px</strong></div>
+        </div>
+        <div style="font-size:0.84rem; color:var(--muted); margin-top:6px;">
+          仲間数: ${Game.companions.length}人（150日目以降、50日ごとに救出イベント発生）
+        </div>
+      `;
+    } else if (activeGameMenuTab === "equip") {
+      renderEquipView(content, renderGameMenu);
+    } else if (activeGameMenuTab === "shop") {
+      renderShopView(content, renderGameMenu);
+    } else if (activeGameMenuTab === "bestiary") {
+      renderBestiaryAndRecords(content);
+    } else if (activeGameMenuTab === "system") {
+      content.innerHTML = `
+        <p style="margin:0 0 10px;">現在の進行（日数・レベル）を終了して拠点に戻りますか？（獲得済みコインは保持されます）</p>
+        <button class="btn btn-danger" id="btnAbandonToHub">拠点へ戻る</button>
+      `;
+      content.querySelector("#btnAbandonToHub").onclick = () => {
+        if (Game.day > SaveManager.data.bestDay) SaveManager.data.bestDay = Game.day;
+        SaveManager.save();
+        returnToHub();
+      };
+    }
+  }
+
+  /* =========================================================================
+   * 6. INPUT HANDLING (PC Keyboard + Mobile Virtual Joystick)
+   * ========================================================================= */
+  window.addEventListener("keydown", (e) => {
+    Input.keys[e.code] = true;
+    if (Game.mode === "playing" && !Game.paused) {
+      if (e.code === "Space" || e.code === "KeyE") {
+        e.preventDefault();
+        triggerActiveSkill();
+      } else if (e.code === "KeyQ" || e.code === "KeyF") {
+        e.preventDefault();
+        useRecoveryPotion();
+      } else if (e.code === "Escape") {
+        openGameMenu("stats");
+      }
+    } else if (e.code === "Escape" && document.getElementById("gameMenuModal").classList.contains("active")) {
+      closeGameMenu();
+    }
+  });
+
+  window.addEventListener("keyup", (e) => {
+    Input.keys[e.code] = false;
+  });
+
+  // バーチャルジョイスティック (Pointer EventsでPCタッチ/スマホ両対応)
+  const joyArea = document.getElementById("joystickArea");
+  const joyKnob = document.getElementById("joystickKnob");
+  let joyPointerId = null;
+
+  function updateJoystickFromPointer(clientX, clientY) {
+    const rect = joyArea.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2;
+    const cy = rect.top + rect.height / 2;
+    const maxR = rect.width * 0.42;
+    let dx = clientX - cx;
+    let dy = clientY - cy;
+    const d = Math.hypot(dx, dy);
+    if (d > maxR) {
+      dx = (dx / d) * maxR;
+      dy = (dy / d) * maxR;
+    }
+    joyKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    Input.joyX = dx / maxR;
+    Input.joyY = dy / maxR;
+  }
+
+  function resetJoystick() {
+    joyPointerId = null;
+    Input.joyActive = false;
+    Input.joyX = 0;
+    Input.joyY = 0;
+    joyKnob.style.transform = "translate(0px, 0px)";
+  }
+
+  joyArea.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    joyPointerId = e.pointerId;
+    joyArea.setPointerCapture(e.pointerId);
+    Input.joyActive = true;
+    updateJoystickFromPointer(e.clientX, e.clientY);
+  });
+
+  joyArea.addEventListener("pointermove", (e) => {
+    if (e.pointerId !== joyPointerId) return;
+    updateJoystickFromPointer(e.clientX, e.clientY);
+  });
+
+  joyArea.addEventListener("pointerup", (e) => {
+    if (e.pointerId === joyPointerId) resetJoystick();
+  });
+  joyArea.addEventListener("pointercancel", (e) => {
+    if (e.pointerId === joyPointerId) resetJoystick();
+  });
+
+  /* =========================================================================
+   * 7. EVENT BINDINGS & INITIALIZATION
+   * ========================================================================= */
+  document.getElementById("btnStartAdventure").onclick = startNewRun;
+  document.getElementById("btnHubTabShop").onclick = () => { activeHubTab = "shop"; renderHub(); };
+  document.getElementById("btnHubTabUpgrade").onclick = () => { activeHubTab = "upgrade"; renderHub(); };
+  document.getElementById("btnHubTabEquip").onclick = () => { activeHubTab = "equip"; renderHub(); };
+  document.getElementById("btnHubTabRecord").onclick = () => { activeHubTab = "record"; renderHub(); };
+
+  document.getElementById("btnOpenMenu").onclick = () => openGameMenu("stats");
+  document.getElementById("btnCloseGameMenu").onclick = closeGameMenu;
+  document.getElementById("btnHudWeapon").onclick = () => openGameMenu("equip");
+  document.getElementById("btnUseSkill").onclick = triggerActiveSkill;
+  document.getElementById("btnUsePotion").onclick = useRecoveryPotion;
+
+  document.querySelectorAll("#gameMenuTabs .tab-btn").forEach(btn => {
+    btn.onclick = () => {
+      activeGameMenuTab = btn.dataset.tab;
+      renderGameMenu();
+    };
+  });
+
+  document.getElementById("btnRetryFromDeath").onclick = startNewRun;
+  document.getElementById("btnReturnHubFromDeath").onclick = returnToHub;
+  document.getElementById("btnContinueEndless").onclick = () => {
+    document.getElementById("victoryModal").classList.remove("active");
+    Game.paused = false;
+    showToast("エンドレスモード突入！101日目以降へ");
+  };
+
+  function resizeCanvas() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  window.addEventListener("resize", resizeCanvas);
+  window.addEventListener("beforeunload", () => SaveManager.save());
+
+  // Main Loop
+  let lastTime = performance.now();
+  function mainLoop(now) {
+    const dt = Math.min(0.05, (now - lastTime) / 1000);
+    lastTime = now;
+
+    updateGame(dt);
+    renderGame();
+    requestAnimationFrame(mainLoop);
+  }
+
+  // Boot
+  SaveManager.load();
+  resizeCanvas();
+  renderHub();
+  requestAnimationFrame(mainLoop);
+})();
+</script>
+</body>
+</html>
