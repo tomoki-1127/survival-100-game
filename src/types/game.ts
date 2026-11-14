@@ -299,6 +299,7 @@ export interface HudSnapshot {
   skillMaxCd: number;
   potionCharges: number;
   potionMaxCharges: number;
+  potionCooldown: number;
   boss: { name: string; hp: number; maxHp: number } | null;
   playerStats: {
     atk: number;

@@ -113,6 +113,9 @@ export class GameEngine {
 
   clearKeys() {
     this.keys = {};
+    this.joyX = 0;
+    this.joyY = 0;
+    this.joyActive = false;
   }
 
   setJoystick(x: number, y: number, active: boolean) {
@@ -456,6 +459,7 @@ export class GameEngine {
       p.level += 1;
       p.nextXp = Math.round(p.nextXp * 1.28 + 18);
       this.paused = true;
+      this.clearKeys();
       SoundFX.playLevelUp();
 
       const pool = [...LEVEL_UP_PERKS];
@@ -659,6 +663,7 @@ export class GameEngine {
 
   private handlePlayerDeath() {
     this.paused = true;
+    this.clearKeys();
     const reached = this.day;
     if (reached > SaveManager.data.bestDay) {
       SaveManager.data.bestDay = reached;
@@ -723,6 +728,7 @@ export class GameEngine {
 
     if (isDay100BossClear) {
       this.paused = true;
+      this.clearKeys();
       this.callbacks.onVictory100();
     } else if (this.day % 10 === 0) {
       SoundFX.playBossWarn();
@@ -1115,6 +1121,7 @@ export class GameEngine {
       skillMaxCd: this.skillMaxCd,
       potionCharges: this.potionCharges,
       potionMaxCharges: this.potionMaxCharges,
+      potionCooldown: this.potionCd,
       boss: bossEntity
         ? { name: bossEntity.name, hp: bossEntity.hp, maxHp: bossEntity.maxHp }
         : null,

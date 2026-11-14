@@ -80,18 +80,23 @@ export default function App() {
     engine.startLoop();
 
     const handleResize = () => {
-      engine.resize(window.innerWidth, window.innerHeight);
+      const vw = window.visualViewport?.width ?? window.innerWidth;
+      const vh = window.visualViewport?.height ?? window.innerHeight;
+      engine.resize(Math.round(vw), Math.round(vh));
     };
 
     const handleBeforeUnload = () => {
       SaveManager.save();
     };
 
+    handleResize();
     window.addEventListener("resize", handleResize);
+    window.visualViewport?.addEventListener("resize", handleResize);
     window.addEventListener("beforeunload", handleBeforeUnload);
 
     return () => {
       window.removeEventListener("resize", handleResize);
+      window.visualViewport?.removeEventListener("resize", handleResize);
       window.removeEventListener("beforeunload", handleBeforeUnload);
       engine.stopLoop();
       engineRef.current = null;
@@ -185,9 +190,13 @@ export default function App() {
   };
 
   return (
-    <div className="relative w-full h-full overflow-hidden bg-[#0b0f17]">
+    <div
+      className={`relative w-full h-full overflow-hidden bg-[#0b0f17] ${
+        screenMode === "playing" ? "combat-touch-surface" : ""
+      }`}
+    >
       {/* 2D Game Canvas */}
-      <canvas ref={canvasRef} className="block w-full h-full touch-none" />
+      <canvas ref={canvasRef} className="block w-full h-full combat-touch-surface" />
 
       {/* Hub Screen */}
       {screenMode === "hub" && (
@@ -208,6 +217,7 @@ export default function App() {
         <GameHud
           hud={hud}
           muted={muted}
+          paused={Boolean(menuTab || levelUpState || deathSummary || showVictory)}
           onToggleMute={handleToggleMute}
           onOpenMenu={handleOpenMenu}
           onUseSkill={() => engineRef.current?.triggerActiveSkill()}
