@@ -90,3 +90,52 @@
 .animate-toast {
   animation: toastFade 2.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+@keyframes secretGoldFlash {
+  0% {
+    opacity: 0;
+  }
+  12% {
+    opacity: 0.92;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+@keyframes secretCardPop {
+  0% {
+    opacity: 0;
+    transform: scale(0.84) translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: scale(1) translateY(0);
+  }
+}
+
+@keyframes secretParticleFly {
+  0% {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(0.4) rotate(0deg);
+  }
+  65% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translate(calc(-50% + var(--tx)), calc(-50% + var(--ty))) scale(1.15) rotate(var(--rot));
+  }
+}
+
+.animate-secret-flash {
+  animation: secretGoldFlash 0.95s ease-out forwards;
+}
+
+.animate-secret-card {
+  animation: secretCardPop 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+.animate-secret-particle {
+  animation: secretParticleFly 1.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}

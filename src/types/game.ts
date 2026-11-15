@@ -110,6 +110,7 @@ export interface SaveData {
   bestiary: Record<string, number>;
   achievements: string[];
   unlockedCompanions: string[];
+  secretWeaponsUnlocked?: boolean;
   stats: {
     totalKills: number;
     totalRuns: number;

@@ -1,4 +1,4 @@
-import { CATEGORY_TO_SLOT, getEquipmentById } from "../data/equipment";
+import { CATEGORY_TO_SLOT, EQUIPMENT_DB, getEquipmentById } from "../data/equipment";
 import { ACHIEVEMENTS_DB, PERM_UPGRADES_DB } from "../data/upgrades";
 import type { EquipmentItem, PermUpgradeDef, PermUpgradeKey, SaveData, StatBlock } from "../types/game";
 
@@ -35,6 +35,7 @@ export function createDefaultSave(): SaveData {
     bestiary: {},
     achievements: [],
     unlockedCompanions: [],
+    secretWeaponsUnlocked: false,
     stats: {
       totalKills: 0,
       totalRuns: 0,
@@ -98,6 +99,7 @@ export function migrateSaveData(raw: unknown): SaveData {
     unlockedCompanions: Array.isArray(r.unlockedCompanions)
       ? Array.from(new Set(r.unlockedCompanions))
       : [],
+    secretWeaponsUnlocked: Boolean(r.secretWeaponsUnlocked),
     version: CURRENT_SAVE_VERSION,
   };
 }
@@ -198,6 +200,45 @@ export function purchasePermUpgradeAtomic(
   SaveManager.data.permUpgrades[up.id] = newLevel;
   SaveManager.save();
   return { ok: true, up, newLevel, cost };
+}
+
+export interface SecretUnlockResult {
+  alreadyUnlocked: boolean;
+  newlyUnlockedCount: number;
+  totalWeaponsCount: number;
+}
+
+export function unlockAllWeaponsSecret(): SecretUnlockResult {
+  const allWeapons = EQUIPMENT_DB.filter((item) => CATEGORY_TO_SLOT[item.category] === "weapon");
+  const totalWeaponsCount = allWeapons.length;
+
+  if (SaveManager.data.secretWeaponsUnlocked) {
+    return {
+      alreadyUnlocked: true,
+      newlyUnlockedCount: 0,
+      totalWeaponsCount,
+    };
+  }
+
+  const ownedSet = new Set(SaveManager.data.ownedEquipment);
+  let newlyUnlockedCount = 0;
+
+  for (const weapon of allWeapons) {
+    if (!ownedSet.has(weapon.id)) {
+      ownedSet.add(weapon.id);
+      SaveManager.data.ownedEquipment.push(weapon.id);
+      newlyUnlockedCount += 1;
+    }
+  }
+
+  SaveManager.data.secretWeaponsUnlocked = true;
+  SaveManager.save();
+
+  return {
+    alreadyUnlocked: false,
+    newlyUnlockedCount,
+    totalWeaponsCount,
+  };
 }
 
 export function getEquippedStats(save: SaveData = SaveManager.data): Required<StatBlock> {

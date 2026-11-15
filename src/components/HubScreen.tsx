@@ -1,9 +1,14 @@
 import { Coins, Compass, Play, Shield, Sparkles, Trophy, Volume2, VolumeX } from "lucide-react";
-import { useState } from "react";
+import { type CSSProperties, useEffect, useRef, useState } from "react";
 import { COMPANION_SPRITE_MAP, HERO_SPRITE_PATH } from "../data/assets";
 import { COMPANION_CLASSES } from "../data/upgrades";
 import type { SaveData } from "../types/game";
-import { getBaseHubStats } from "../utils/saveManager";
+import {
+  evaluateAchievements,
+  getBaseHubStats,
+  type SecretUnlockResult,
+  unlockAllWeaponsSecret,
+} from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
 import { PixelSprite } from "./PixelSprite";
 import {
@@ -24,6 +29,19 @@ interface HubScreenProps {
   onToast: (msg: string) => void;
 }
 
+const SECRET_PARTICLES = Array.from({ length: 24 }, (_, idx) => {
+  const angle = (idx / 24) * Math.PI * 2 + (idx % 2) * 0.14;
+  const dist = 110 + (idx % 4) * 42;
+  return {
+    id: idx,
+    tx: `${Math.round(Math.cos(angle) * dist)}px`,
+    ty: `${Math.round(Math.sin(angle) * dist)}px`,
+    rot: `${(idx % 2 === 0 ? 1 : -1) * (140 + idx * 12)}deg`,
+    size: idx % 3 === 0 ? 10 : 7,
+    delay: `${(idx % 5) * 45}ms`,
+  };
+});
+
 export function HubScreen({
   save,
   muted,
@@ -33,7 +51,69 @@ export function HubScreen({
   onToast,
 }: HubScreenProps) {
   const [activeTab, setActiveTab] = useState<HubTab>("shop");
+  const [secretCelebration, setSecretCelebration] = useState<SecretUnlockResult | null>(null);
+
+  const tapCountRef = useRef(0);
+  const lastTapAtRef = useRef(0);
+  const tapResetTimerRef = useRef<number | null>(null);
+  const celebrationTimerRef = useRef<number | null>(null);
+
   const baseStats = getBaseHubStats(save);
+
+  useEffect(() => {
+    return () => {
+      if (tapResetTimerRef.current !== null) {
+        window.clearTimeout(tapResetTimerRef.current);
+      }
+      if (celebrationTimerRef.current !== null) {
+        window.clearTimeout(celebrationTimerRef.current);
+      }
+    };
+  }, []);
+
+  const handleSecretTap = () => {
+    const now = Date.now();
+    if (tapResetTimerRef.current !== null) {
+      window.clearTimeout(tapResetTimerRef.current);
+      tapResetTimerRef.current = null;
+    }
+
+    if (now - lastTapAtRef.current >= 5000) {
+      tapCountRef.current = 0;
+    }
+
+    lastTapAtRef.current = now;
+    tapCountRef.current += 1;
+
+    if (tapCountRef.current >= 10) {
+      tapCountRef.current = 0;
+      const result = unlockAllWeaponsSecret();
+      if (result.alreadyUnlocked) {
+        SoundFX.playClick();
+        onToast("すべての武器は解放済みです");
+        return;
+      }
+
+      SoundFX.playLevelUp();
+      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      onDataChange();
+      setSecretCelebration(result);
+
+      if (celebrationTimerRef.current !== null) {
+        window.clearTimeout(celebrationTimerRef.current);
+      }
+      celebrationTimerRef.current = window.setTimeout(() => {
+        setSecretCelebration(null);
+        celebrationTimerRef.current = null;
+      }, 4500);
+      return;
+    }
+
+    tapResetTimerRef.current = window.setTimeout(() => {
+      tapCountRef.current = 0;
+      tapResetTimerRef.current = null;
+    }, 5000);
+  };
 
   const tabs: Array<{ id: HubTab; label: string; icon: typeof Shield }> = [
     { id: "shop", label: "武器・防具ショップ", icon: Shield },
@@ -53,8 +133,16 @@ export function HubScreen({
                 <PixelSprite src={HERO_SPRITE_PATH} alt="主人公" className="w-14 h-14 sm:w-18 sm:h-18" fallbackText="勇" />
               </div>
               <div className="space-y-1">
-                <h1 className="font-display text-2xl sm:text-4xl font-extrabold tracking-wider text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-amber-600 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
-                  SURVIVAL 100
+                <h1 className="font-display text-2xl sm:text-4xl font-extrabold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
+                  <span className="text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-amber-600">
+                    SURVIVAL{" "}
+                  </span>
+                  <span
+                    onClick={handleSecretTap}
+                    className="text-transparent bg-clip-text bg-gradient-to-b from-amber-200 via-amber-400 to-amber-600 touch-manipulation select-none cursor-default"
+                  >
+                    100
+                  </span>
                 </h1>
                 <p className="text-xs sm:text-sm text-slate-300">
                   16bitダークファンタジー2DサバイバルRPG — 100日目の魔王討伐とエンドレス記録に挑戦
@@ -184,6 +272,63 @@ export function HubScreen({
           操作方法 — PC: WASD / 矢印キー移動 · Space/E スキル · Q/F 回復薬 · 自動攻撃 / スマホ: 左スティック移動 · 右ボタンでスキル・回復
         </footer>
       </div>
+
+      {/* Secret Command Golden Celebration Overlay */}
+      {secretCelebration && (
+        <div
+          onClick={() => setSecretCelebration(null)}
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/65 backdrop-blur-[2px] cursor-pointer"
+        >
+          {/* Momentary Golden Screen Flash */}
+          <div className="pointer-events-none fixed inset-0 animate-secret-flash bg-[radial-gradient(circle_at_center,rgba(254,249,195,0.92)_0%,rgba(250,204,21,0.58)_45%,rgba(217,119,6,0.22)_100%)]" />
+
+          {/* Golden Radial Particles */}
+          <div className="pointer-events-none fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+            {SECRET_PARTICLES.map((p) => (
+              <span
+                key={p.id}
+                className="absolute left-0 top-0 rotate-45 bg-gradient-to-br from-yellow-100 via-amber-300 to-amber-500 shadow-[0_0_12px_rgba(251,191,36,0.95)] animate-secret-particle"
+                style={
+                  {
+                    width: `${p.size}px`,
+                    height: `${p.size}px`,
+                    animationDelay: p.delay,
+                    "--tx": p.tx,
+                    "--ty": p.ty,
+                    "--rot": p.rot,
+                  } as CSSProperties
+                }
+              />
+            ))}
+          </div>
+
+          {/* Rare Unlock Banner */}
+          <div className="relative df-panel animate-secret-card w-full max-w-md rounded-2xl border-2 border-[#facc15] p-6 text-center shadow-[0_0_50px_rgba(250,204,21,0.45),inset_0_0_24px_rgba(250,204,21,0.18)] space-y-3">
+            <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 border border-[#facc15]/80 text-amber-200 text-xs font-extrabold font-display tracking-[0.16em]">
+              <Sparkles className="w-3.5 h-3.5 text-amber-300" />
+              SECRET COMMAND UNLOCKED!
+            </div>
+
+            <h2 className="text-2xl sm:text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 via-amber-300 to-amber-500 drop-shadow-[0_2px_6px_rgba(0,0,0,0.9)]">
+              全武器解放！
+            </h2>
+
+            <p className="text-sm sm:text-base font-bold text-amber-100 font-mono-num">
+              解放した武器数:{" "}
+              <span className="text-amber-300 text-lg">
+                {secretCelebration.newlyUnlockedCount}
+              </span>
+              種（登録全 {secretCelebration.totalWeaponsCount} 種コンプリート）
+            </p>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              武器・防具ショップおよび装備変更からすべての武器を装備できます（コイン消費なし・自動装備なし）。
+            </p>
+
+            <div className="pt-1 text-[11px] text-amber-300/80">タップまたはクリックで閉じる</div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
