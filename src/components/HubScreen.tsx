@@ -61,6 +61,7 @@ export function HubScreen({
   const lastTapAtRef = useRef(0);
   const tapResetTimerRef = useRef<number | null>(null);
   const celebrationTimerRef = useRef<number | null>(null);
+  const secretLockRef = useRef(false);
 
   const baseStats = getBaseHubStats(save);
   const equippedWeapon = getEquipmentById(save.equipped.weapon);
@@ -79,6 +80,8 @@ export function HubScreen({
   }, []);
 
   const handleSecretTap = () => {
+    if (secretLockRef.current) return;
+
     const now = Date.now();
     if (tapResetTimerRef.current !== null) {
       window.clearTimeout(tapResetTimerRef.current);
@@ -94,28 +97,34 @@ export function HubScreen({
 
     if (tapCountRef.current >= 10) {
       tapCountRef.current = 0;
-      const result = unlockAllWeaponsSecret();
-      if (result.alreadyUnlocked) {
-        SoundFX.playClick();
-        onToast("すべての武器は解放済みです");
-        return;
-      }
+      secretLockRef.current = true;
+      try {
+        const result = unlockAllWeaponsSecret();
+        if (result.alreadyUnlocked) {
+          SoundFX.playClick();
+          onToast("隠しコマンドは使用済みです（全武器＆コイン獲得済み）");
+          return;
+        }
 
-      SoundFX.playLevelUp();
-      evaluateAchievements((ach) => {
-        SoundFX.playAchievement();
-        onToast(`実績解除: ${ach.name} (+${ach.rewardCoins.toLocaleString()}G)`);
-      });
-      onDataChange();
-      setSecretCelebration(result);
+        SoundFX.playLevelUp();
+        SoundFX.playCoin();
+        evaluateAchievements((ach) => {
+          SoundFX.playAchievement();
+          onToast(`実績解除: ${ach.name} (+${ach.rewardCoins.toLocaleString()}G)`);
+        });
+        onDataChange();
+        setSecretCelebration(result);
 
-      if (celebrationTimerRef.current !== null) {
-        window.clearTimeout(celebrationTimerRef.current);
+        if (celebrationTimerRef.current !== null) {
+          window.clearTimeout(celebrationTimerRef.current);
+        }
+        celebrationTimerRef.current = window.setTimeout(() => {
+          setSecretCelebration(null);
+          celebrationTimerRef.current = null;
+        }, 4800);
+      } finally {
+        secretLockRef.current = false;
       }
-      celebrationTimerRef.current = window.setTimeout(() => {
-        setSecretCelebration(null);
-        celebrationTimerRef.current = null;
-      }, 4500);
       return;
     }
 
@@ -367,6 +376,13 @@ export function HubScreen({
               全武器解放！
             </h2>
 
+            <div className="py-2 px-4 rounded-xl bg-slate-950/90 border border-[#facc15]/80 shadow-[0_0_20px_rgba(250,204,21,0.28)] inline-flex items-center justify-center gap-2 font-mono-num">
+              <Coins className="w-5 h-5 text-yellow-300 shrink-0" />
+              <span className="text-xl sm:text-2xl font-extrabold text-transparent bg-clip-text bg-gradient-to-b from-yellow-100 via-amber-300 to-amber-500">
+                {secretCelebration.coinsAdded.toLocaleString()} G GET!
+              </span>
+            </div>
+
             <p className="text-sm sm:text-base font-bold text-amber-100 font-mono-num">
               解放した武器数:{" "}
               <span className="text-amber-300 text-lg">
@@ -376,7 +392,7 @@ export function HubScreen({
             </p>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              武器・防具ショップおよび装備変更からすべての武器を装備できます（コイン消費なし・自動装備なし）。
+              武器・防具ショップおよび装備変更からすべての武器を装備できます（コイン加算・自動装備なし）。
             </p>
 
             <div className="pt-1 text-[11px] text-amber-300/80">タップまたはクリックで閉じる</div>

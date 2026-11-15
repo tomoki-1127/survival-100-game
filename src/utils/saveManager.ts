@@ -532,43 +532,57 @@ export function purchasePermUpgradeAtomic(
   return { ok: true, up, newLevel, cost };
 }
 
+export const SECRET_COIN_REWARD = 999999;
+
 export interface SecretUnlockResult {
   alreadyUnlocked: boolean;
   newlyUnlockedCount: number;
   totalWeaponsCount: number;
+  coinsAdded: number;
 }
+
+let secretUnlockLock = false;
 
 export function unlockAllWeaponsSecret(): SecretUnlockResult {
   const allWeapons = EQUIPMENT_DB.filter((item) => CATEGORY_TO_SLOT[item.category] === "weapon");
   const totalWeaponsCount = allWeapons.length;
 
-  if (SaveManager.data.secretWeaponsUnlocked) {
+  if (secretUnlockLock || SaveManager.data.secretWeaponsUnlocked) {
     return {
       alreadyUnlocked: true,
       newlyUnlockedCount: 0,
       totalWeaponsCount,
+      coinsAdded: 0,
     };
   }
 
-  const ownedSet = new Set(SaveManager.data.ownedEquipment);
-  let newlyUnlockedCount = 0;
+  secretUnlockLock = true;
+  try {
+    const ownedSet = new Set(SaveManager.data.ownedEquipment);
+    let newlyUnlockedCount = 0;
 
-  for (const weapon of allWeapons) {
-    if (!ownedSet.has(weapon.id)) {
-      ownedSet.add(weapon.id);
-      SaveManager.data.ownedEquipment.push(weapon.id);
-      newlyUnlockedCount += 1;
+    for (const weapon of allWeapons) {
+      if (!ownedSet.has(weapon.id)) {
+        ownedSet.add(weapon.id);
+        SaveManager.data.ownedEquipment.push(weapon.id);
+        newlyUnlockedCount += 1;
+      }
     }
+
+    const prevCoins = sanitizeNonNegInt(SaveManager.data.coins, 0);
+    SaveManager.data.coins = prevCoins + SECRET_COIN_REWARD;
+    SaveManager.data.secretWeaponsUnlocked = true;
+    SaveManager.save();
+
+    return {
+      alreadyUnlocked: false,
+      newlyUnlockedCount,
+      totalWeaponsCount,
+      coinsAdded: SECRET_COIN_REWARD,
+    };
+  } finally {
+    secretUnlockLock = false;
   }
-
-  SaveManager.data.secretWeaponsUnlocked = true;
-  SaveManager.save();
-
-  return {
-    alreadyUnlocked: false,
-    newlyUnlockedCount,
-    totalWeaponsCount,
-  };
 }
 
 export function getEquippedStats(save: SaveData = SaveManager.data): Required<StatBlock> {
