@@ -16,6 +16,7 @@ import {
 } from "../data/equipment";
 import { MONSTERS_DB } from "../data/monsters";
 import { ACHIEVEMENTS_DB, COMPANION_CLASSES, PERM_UPGRADES_DB } from "../data/upgrades";
+import { getWeaponSkillDef } from "../data/weaponSkills";
 import type { EquipCategory, EquipSlot, SaveData } from "../types/game";
 import {
   evaluateAchievements,
@@ -55,7 +56,7 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
         onToast(res.reason);
         return;
       }
-      SoundFX.playClick();
+      SoundFX.playPurchase();
       evaluateAchievements((name) => onToast(`実績解除: ${name}`));
       onEquipChanged?.();
       onDataChange();
@@ -69,7 +70,7 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
     const item = getEquipmentById(itemId);
     if (!item) return;
     if (!SaveManager.data.ownedEquipment.includes(item.id)) return;
-    SoundFX.playClick();
+    SoundFX.playItemPickup();
     const slot = CATEGORY_TO_SLOT[item.category];
     SaveManager.data.equipped[slot] = item.id;
     SaveManager.save();
@@ -144,6 +145,11 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
                     <span>{SLOT_LABELS[slot]}枠</span>
                   </div>
                   {statText && <p className="text-xs font-semibold text-emerald-300">{statText}</p>}
+                  {slot === "weapon" && (
+                    <p className="text-[11px] text-sky-300/95 font-semibold">
+                      専用スキル: {getWeaponSkillDef(item.category).name}
+                    </p>
+                  )}
                   <p className="text-xs text-slate-400 leading-relaxed">{item.desc}</p>
                 </div>
               </div>
@@ -196,7 +202,7 @@ export function PermanentUpgradePanel({ save, onDataChange, onToast }: PanelProp
         onToast(res.reason);
         return;
       }
-      SoundFX.playLevelUp();
+      SoundFX.playPurchase();
       evaluateAchievements((name) => onToast(`実績解除: ${name}`));
       onDataChange();
       onToast(`${res.up.name}を Lv.${res.newLevel} に強化しました`);
@@ -268,7 +274,7 @@ export function EquipmentLoadoutPanel({ save, onDataChange, onEquipChanged, onTo
     const item = getEquipmentById(itemId);
     if (!item) return;
     if (!SaveManager.data.ownedEquipment.includes(item.id)) return;
-    SoundFX.playClick();
+    SoundFX.playItemPickup();
     const slot = CATEGORY_TO_SLOT[item.category];
     SaveManager.data.equipped[slot] = item.id;
     SaveManager.save();

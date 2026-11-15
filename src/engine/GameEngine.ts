@@ -1,7 +1,8 @@
-import { preloadCoreGameAssets } from "../data/assets";
+import { type BgmTrackId, preloadCoreGameAssets } from "../data/assets";
 import { getEquipmentById } from "../data/equipment";
 import { getAreaForDay, MONSTERS_DB } from "../data/monsters";
 import { COMPANION_CLASSES, LEVEL_UP_PERKS } from "../data/upgrades";
+import { getRarityVisualTheme, getWeaponSkillDef } from "../data/weaponSkills";
 import type {
   CompanionEntity,
   DeathEffect,
@@ -72,6 +73,8 @@ export class GameEngine {
   private joyX = 0;
   private joyY = 0;
   private joyActive = false;
+  private inShopMenu = false;
+  private scheduledSwordWaves: Array<{ delay: number; angle: number; waveIdx: number }> = [];
 
   constructor(canvas: HTMLCanvasElement, callbacks: EngineCallbacks) {
     this.canvas = canvas;
@@ -80,6 +83,35 @@ export class GameEngine {
     this.ctx = ctx;
     this.callbacks = callbacks;
     preloadCoreGameAssets();
+    this.syncBgm();
+  }
+
+  setInShopMenu(open: boolean) {
+    if (this.inShopMenu === open) return;
+    this.inShopMenu = open;
+    this.syncBgm();
+  }
+
+  resolveActiveBgmTrack(): BgmTrackId {
+    if (this.mode === "hub" || this.inShopMenu) {
+      return "home_shop";
+    }
+    const livingBoss = this.enemies.find((e) => e.isBoss && e.hp > 0);
+    if (livingBoss) {
+      return livingBoss.isFinalBoss ? "final_boss_day100" : "boss";
+    }
+    if (this.day >= 101) {
+      return "endless";
+    }
+    const area = getAreaForDay(this.day);
+    if (area.id === "cave") return "cave";
+    if (area.id === "wasteland") return "wasteland";
+    if (area.id === "abyss") return "demon_realm";
+    return "forest";
+  }
+
+  syncBgm() {
+    SoundFX.playBgm(this.resolveActiveBgmTrack());
   }
 
   startLoop() {
@@ -146,6 +178,7 @@ export class GameEngine {
 
     this.mode = "playing";
     this.paused = false;
+    this.inShopMenu = false;
     this.day = 1;
     this.dayTimer = 0;
     this.elapsedTotal = 0;
@@ -162,13 +195,16 @@ export class GameEngine {
     this.particles = [];
     this.deathEffects = [];
     this.floatingTexts = [];
+    this.scheduledSwordWaves = [];
 
     this.player = this.createPlayerObject();
+    this.skillMaxCd = getWeaponSkillDef(this.player.weaponCategory).cooldown;
     this.camera.x = this.player.x;
     this.camera.y = this.player.y;
     this.generateGroundProps();
     this.spawnSavedCompanions();
 
+    this.syncBgm();
     this.emitHud();
     this.callbacks.onToast(`1日目: ${getAreaForDay(1).name} — サバイバル開始`);
   }
@@ -180,13 +216,17 @@ export class GameEngine {
     SaveManager.save();
     this.mode = "hub";
     this.paused = true;
+    this.inShopMenu = false;
+    this.scheduledSwordWaves = [];
     this.clearKeys();
+    this.syncBgm();
     this.callbacks.onSaveChanged();
   }
 
   private createPlayerObject(): PlayerState {
     const base = getBaseHubStats();
     const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
+    const weaponCategory = weapon?.category || "剣";
     return {
       x: ARENA_SIZE / 2,
       y: ARENA_SIZE / 2,
@@ -195,6 +235,14 @@ export class GameEngine {
       facingX: 1,
       walkPhase: 0,
       attackAnimTimer: 0,
+      skillAnimTimer: 0,
+      skillAnimMax: 0.3,
+      dashInvulnTimer: 0,
+      guardFlashTimer: 0,
+      weaponId: weapon?.id || "wp_sword_apprentice",
+      weaponCategory,
+      weaponRarity: weapon?.rarity || "ノーマル",
+      shieldId: SaveManager.data.equipped.shield || null,
       level: 1,
       xp: 0,
       nextXp: 40,
@@ -234,6 +282,8 @@ export class GameEngine {
     const base = getBaseHubStats();
     const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
     const prevMax = p.maxHp;
+    const weaponCategory = weapon?.category || "剣";
+    const weaponChanged = p.weaponId !== (weapon?.id || "wp_sword_apprentice");
 
     p.maxHp = Math.max(10, Math.round(base.maxHp + p.runBonus.maxHp));
     p.atk = Math.max(1, Math.round((base.atk + p.runBonus.atk) * p.runMult.atk));
@@ -246,6 +296,19 @@ export class GameEngine {
     p.regen = Number((base.regen + p.runBonus.regen).toFixed(1));
     p.range = Math.round((weapon?.range || 95) * p.runMult.range);
     p.attackStyle = weapon?.attackStyle || "slash";
+    p.weaponId = weapon?.id || "wp_sword_apprentice";
+    p.weaponCategory = weaponCategory;
+    p.weaponRarity = weapon?.rarity || "ノーマル";
+    p.shieldId = SaveManager.data.equipped.shield || null;
+
+    const newSkillDef = getWeaponSkillDef(p.weaponCategory);
+    this.skillMaxCd = newSkillDef.cooldown;
+    if (this.skillCooldown > this.skillMaxCd) {
+      this.skillCooldown = this.skillMaxCd;
+    }
+    if (weaponChanged) {
+      this.scheduledSwordWaves = [];
+    }
 
     if (p.maxHp > prevMax) {
       p.hp += p.maxHp - prevMax;
@@ -358,6 +421,10 @@ export class GameEngine {
       facingX: x >= this.player.x ? -1 : 1,
       attackAnimTimer: 0,
     });
+
+    if (def.isBoss) {
+      this.syncBgm();
+    }
   }
 
   private pickEnemyTypeForDay(day: number): string {
@@ -422,6 +489,7 @@ export class GameEngine {
     const p = this.player;
     if (!p) return;
     SoundFX.playKill();
+    SoundFX.playCoin();
     this.spawnParticles(enemy.x, enemy.y, enemy.color, enemy.isBoss ? 26 : 9);
     if (this.deathEffects.length < 40) {
       this.deathEffects.push({
@@ -514,34 +582,48 @@ export class GameEngine {
     if (Math.abs(Math.cos(angle)) > 0.15) {
       p.facingX = Math.cos(angle) >= 0 ? 1 : -1;
     }
-    p.attackAnimTimer = 0.22;
+    p.attackAnimTimer = p.weaponCategory === "大剣" ? 0.28 : 0.22;
 
+    const rarityTheme = getRarityVisualTheme(p.weaponRarity);
     const style = p.attackStyle;
+    SoundFX.playWeaponAutoAttack(p.weaponCategory, p.weaponRarity);
+
     if (style === "arrow" || style === "magic") {
-      SoundFX.playShot();
+      const projColor =
+        p.weaponRarity !== "ノーマル"
+          ? rarityTheme.accent
+          : style === "arrow"
+            ? "#fef08a"
+            : "#f472b6";
       this.projectiles.push({
         fromPlayer: true,
-        x: p.x + Math.cos(angle) * 16,
-        y: p.y + Math.sin(angle) * 16,
+        x: p.x + Math.cos(angle) * 18,
+        y: p.y + Math.sin(angle) * 18,
         vx: Math.cos(angle) * (style === "arrow" ? 560 : 420),
         vy: Math.sin(angle) * (style === "arrow" ? 560 : 420),
         radius: style === "arrow" ? 5 : 9,
         dmg: p.atk,
         aoe: style === "magic" ? 56 : 0,
-        color: style === "arrow" ? "#fef08a" : "#f472b6",
+        color: projColor,
         life: 1.1,
+        visualKind: style === "arrow" ? "arrow" : "magic",
       });
+      if (p.weaponRarity !== "ノーマル") {
+        this.spawnParticles(p.x + Math.cos(angle) * 20, p.y + Math.sin(angle) * 20, rarityTheme.accent, 3);
+      }
     } else if (style === "spin") {
-      SoundFX.playSlash();
+      const slashColor = p.weaponRarity === "ノーマル" ? "#fb923c" : rarityTheme.accent;
       this.slashEffects.push({
         x: p.x,
         y: p.y,
         angle,
         arc: Math.PI * 2,
         radius: p.range,
-        color: "#fb923c",
+        color: slashColor,
         life: 0.2,
         maxLife: 0.2,
+        kind: "spin",
+        rarity: p.weaponRarity,
       });
       for (const e of [...this.enemies]) {
         if (e.hp <= 0) continue;
@@ -551,16 +633,19 @@ export class GameEngine {
         }
       }
     } else if (style === "thrust") {
-      SoundFX.playSlash();
+      const thrustColor = p.weaponRarity === "ノーマル" ? "#38bdf8" : rarityTheme.accent;
       this.slashEffects.push({
         x: p.x,
         y: p.y,
         angle,
         arc: 0.48,
         radius: p.range,
-        color: "#38bdf8",
+        length: p.range,
+        color: thrustColor,
         life: 0.16,
         maxLife: 0.16,
+        kind: "thrust",
+        rarity: p.weaponRarity,
       });
       for (const e of [...this.enemies]) {
         if (e.hp <= 0) continue;
@@ -577,17 +662,24 @@ export class GameEngine {
         }
       }
     } else {
-      SoundFX.playSlash();
-      const arc = style === "cleave" ? 2.1 : 1.45;
+      const arc = style === "cleave" ? 2.15 : 1.45;
+      const slashColor =
+        p.weaponRarity !== "ノーマル"
+          ? rarityTheme.accent
+          : style === "cleave"
+            ? "#f87171"
+            : "#e2e8f0";
       this.slashEffects.push({
         x: p.x,
         y: p.y,
         angle,
         arc,
         radius: p.range,
-        color: style === "cleave" ? "#f87171" : "#e2e8f0",
-        life: 0.18,
-        maxLife: 0.18,
+        color: slashColor,
+        life: style === "cleave" ? 0.22 : 0.18,
+        maxLife: style === "cleave" ? 0.22 : 0.18,
+        kind: style === "cleave" ? "cleave" : "slash",
+        rarity: p.weaponRarity,
       });
       for (const e of [...this.enemies]) {
         if (e.hp <= 0) continue;
@@ -609,35 +701,302 @@ export class GameEngine {
     return true;
   }
 
-  triggerActiveSkill() {
-    if (this.mode !== "playing" || this.paused || this.skillCooldown > 0 || !this.player) return;
+  private findSkillAimTarget(): EnemyEntity | null {
     const p = this.player;
-    this.skillCooldown = this.skillMaxCd;
-    p.attackAnimTimer = 0.28;
-    SoundFX.playSkill();
+    if (!p) return null;
+    let nearest: EnemyEntity | null = null;
+    let bestDist = Infinity;
+    for (const e of this.enemies) {
+      if (e.hp <= 0) continue;
+      const d = Math.hypot(e.x - p.x, e.y - p.y);
+      if (d < bestDist && d <= Math.max(360, p.range * 1.6)) {
+        bestDist = d;
+        nearest = e;
+      }
+    }
+    return nearest;
+  }
 
-    const radius = Math.max(145, p.range * 1.35);
+  private executeSwordSkillWave(angle: number, waveIdx: number) {
+    const p = this.player;
+    if (!p) return;
+    const rarityTheme = getRarityVisualTheme(p.weaponRarity);
+    const radius = Math.max(140, p.range * 1.45);
+    const arc = 2.05;
+    const waveAngle = angle + (waveIdx - 1) * 0.16;
+
+    // Slight forward step on each combo slash
+    p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x + Math.cos(angle) * 10));
+    p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y + Math.sin(angle) * 10));
+    p.attackAnimTimer = 0.16;
+
     this.slashEffects.push({
       x: p.x,
       y: p.y,
-      angle: 0,
-      arc: Math.PI * 2,
+      angle: waveAngle,
+      arc,
       radius,
-      color: "#fbbf24",
-      life: 0.3,
-      maxLife: 0.3,
+      color: p.weaponRarity === "ノーマル" ? "#38bdf8" : rarityTheme.accent,
+      life: 0.2,
+      maxLife: 0.2,
+      kind: "slash",
+      rarity: p.weaponRarity,
     });
-    this.screenShake = 0.16;
+    this.spawnParticles(
+      p.x + Math.cos(waveAngle) * (radius * 0.55),
+      p.y + Math.sin(waveAngle) * (radius * 0.55),
+      rarityTheme.accent,
+      rarityTheme.sparkCount
+    );
 
     for (const e of [...this.enemies]) {
       if (e.hp <= 0) continue;
-      const d = Math.hypot(e.x - p.x, e.y - p.y) - e.radius;
+      const dx = e.x - p.x;
+      const dy = e.y - p.y;
+      const d = Math.hypot(dx, dy) - e.radius;
       if (d <= radius) {
-        this.damageEnemy(e, p.atk * 2.1 + 12, Math.atan2(e.y - p.y, e.x - p.x), 180);
+        const diff = Math.abs(
+          Math.atan2(Math.sin(Math.atan2(dy, dx) - waveAngle), Math.cos(Math.atan2(dy, dx) - waveAngle))
+        );
+        if (diff <= arc * 0.62) {
+          this.damageEnemy(e, p.atk * 0.92 + 5, Math.atan2(dy, dx), 55);
+        }
       }
     }
     this.enemies = this.enemies.filter((e) => e.hp > 0);
-    this.spawnFloatingText(p.x, p.y - 30, "旋風斬り！", "#fbbf24", 15);
+  }
+
+  private pointToSegmentDist(
+    px: number,
+    py: number,
+    x1: number,
+    y1: number,
+    x2: number,
+    y2: number
+  ): number {
+    const dx = x2 - x1;
+    const dy = y2 - y1;
+    const l2 = dx * dx + dy * dy;
+    if (l2 === 0) return Math.hypot(px - x1, py - y1);
+    const t = Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / l2));
+    return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+  }
+
+  triggerActiveSkill() {
+    if (this.mode !== "playing" || this.paused || this.skillCooldown > 0 || !this.player) return;
+    const p = this.player;
+    const skillDef = getWeaponSkillDef(p.weaponCategory);
+    const rarityTheme = getRarityVisualTheme(p.weaponRarity);
+
+    this.skillCooldown = skillDef.cooldown;
+    this.skillMaxCd = skillDef.cooldown;
+    p.skillAnimMax = 0.36;
+    p.skillAnimTimer = 0.36;
+    p.attackAnimTimer = 0.3;
+
+    const target = this.findSkillAimTarget();
+    const aimAngle = target ? Math.atan2(target.y - p.y, target.x - p.x) : p.facingAngle;
+    p.facingAngle = aimAngle;
+    if (Math.abs(Math.cos(aimAngle)) > 0.15) {
+      p.facingX = Math.cos(aimAngle) >= 0 ? 1 : -1;
+    }
+
+    SoundFX.playWeaponSkill(p.weaponCategory, p.weaponRarity);
+
+    switch (p.weaponCategory) {
+      case "剣": {
+        this.screenShake = 0.12;
+        this.executeSwordSkillWave(aimAngle, 0);
+        this.scheduledSwordWaves.push(
+          { delay: 0.085, angle: aimAngle, waveIdx: 1 },
+          { delay: 0.17, angle: aimAngle, waveIdx: 2 }
+        );
+        this.spawnFloatingText(p.x, p.y - 32, `${skillDef.name}！`, skillDef.color, 15);
+        break;
+      }
+
+      case "大剣": {
+        const radius = Math.max(175, p.range * 1.48);
+        const arc = Math.PI * 1.42;
+        this.slashEffects.push({
+          x: p.x,
+          y: p.y,
+          angle: aimAngle,
+          arc,
+          radius,
+          color: p.weaponRarity === "ノーマル" ? "#f87171" : rarityTheme.accent,
+          life: 0.34,
+          maxLife: 0.34,
+          kind: "cleave",
+          rarity: p.weaponRarity,
+        });
+        this.spawnParticles(
+          p.x + Math.cos(aimAngle) * (radius * 0.6),
+          p.y + Math.sin(aimAngle) * (radius * 0.6),
+          rarityTheme.accent,
+          rarityTheme.sparkCount + 6
+        );
+        this.screenShake = 0.24;
+
+        for (const e of [...this.enemies]) {
+          if (e.hp <= 0) continue;
+          const dx = e.x - p.x;
+          const dy = e.y - p.y;
+          const d = Math.hypot(dx, dy) - e.radius;
+          if (d <= radius) {
+            const diff = Math.abs(
+              Math.atan2(Math.sin(Math.atan2(dy, dx) - aimAngle), Math.cos(Math.atan2(dy, dx) - aimAngle))
+            );
+            if (diff <= arc * 0.56) {
+              this.damageEnemy(e, p.atk * 2.85 + 22, Math.atan2(dy, dx), 220);
+            }
+          }
+        }
+        this.spawnFloatingText(p.x, p.y - 34, `${skillDef.name}！`, skillDef.color, 16);
+        break;
+      }
+
+      case "槍": {
+        const startX = p.x;
+        const startY = p.y;
+        const dashDist = Math.max(165, Math.min(220, p.range * 1.05));
+        const endX = Math.max(32, Math.min(ARENA_SIZE - 32, startX + Math.cos(aimAngle) * dashDist));
+        const endY = Math.max(32, Math.min(ARENA_SIZE - 32, startY + Math.sin(aimAngle) * dashDist));
+        p.x = endX;
+        p.y = endY;
+        p.dashInvulnTimer = 0.24;
+
+        const actualDist = Math.max(80, Math.hypot(endX - startX, endY - startY));
+        this.slashEffects.push({
+          x: startX,
+          y: startY,
+          angle: aimAngle,
+          arc: 0.45,
+          radius: actualDist,
+          length: actualDist + 36,
+          color: p.weaponRarity === "ノーマル" ? "#38bdf8" : rarityTheme.accent,
+          life: 0.28,
+          maxLife: 0.28,
+          kind: "thrust",
+          rarity: p.weaponRarity,
+        });
+
+        for (let step = 0; step <= 4; step++) {
+          const t = step / 4;
+          this.spawnParticles(
+            startX + (endX - startX) * t,
+            startY + (endY - startY) * t,
+            rarityTheme.accent,
+            4
+          );
+        }
+        this.screenShake = 0.14;
+
+        for (const e of [...this.enemies]) {
+          if (e.hp <= 0) continue;
+          const distToLine = this.pointToSegmentDist(e.x, e.y, startX, startY, endX, endY);
+          if (distToLine <= e.radius + 36) {
+            this.damageEnemy(e, p.atk * 2.35 + 16, aimAngle, 150);
+          }
+        }
+        this.spawnFloatingText(p.x, p.y - 32, `${skillDef.name}！`, skillDef.color, 15);
+        break;
+      }
+
+      case "斧": {
+        const radius = Math.max(170, p.range * 1.62);
+        this.slashEffects.push({
+          x: p.x,
+          y: p.y,
+          angle: 0,
+          arc: Math.PI * 2,
+          radius,
+          color: p.weaponRarity === "ノーマル" ? "#fb923c" : rarityTheme.accent,
+          life: 0.36,
+          maxLife: 0.36,
+          kind: "shockwave",
+          rarity: p.weaponRarity,
+        });
+        this.spawnParticles(p.x, p.y, rarityTheme.accent, rarityTheme.sparkCount + 12);
+        this.screenShake = 0.26;
+
+        for (const e of [...this.enemies]) {
+          if (e.hp <= 0) continue;
+          const d = Math.hypot(e.x - p.x, e.y - p.y) - e.radius;
+          if (d <= radius) {
+            this.damageEnemy(e, p.atk * 2.45 + 18, Math.atan2(e.y - p.y, e.x - p.x), 210);
+          }
+        }
+        this.spawnFloatingText(p.x, p.y - 34, `${skillDef.name}！`, skillDef.color, 16);
+        break;
+      }
+
+      case "弓": {
+        const offsets = [-0.28, -0.14, 0, 0.14, 0.28];
+        const arrowColor = p.weaponRarity === "ノーマル" ? "#a3e635" : rarityTheme.accent;
+        for (const off of offsets) {
+          const a = aimAngle + off;
+          this.projectiles.push({
+            fromPlayer: true,
+            x: p.x + Math.cos(a) * 18,
+            y: p.y + Math.sin(a) * 18,
+            vx: Math.cos(a) * 680,
+            vy: Math.sin(a) * 680,
+            radius: 8,
+            dmg: p.atk * 1.3 + 8,
+            aoe: 0,
+            color: arrowColor,
+            life: 0.95,
+            piercing: true,
+            hitTargets: new Set<EnemyEntity>(),
+            visualKind: "pierce_arrow",
+          });
+        }
+        this.spawnParticles(
+          p.x + Math.cos(aimAngle) * 20,
+          p.y + Math.sin(aimAngle) * 20,
+          arrowColor,
+          rarityTheme.sparkCount + 4
+        );
+        this.screenShake = 0.1;
+        this.spawnFloatingText(p.x, p.y - 32, `${skillDef.name}！`, skillDef.color, 15);
+        break;
+      }
+
+      case "杖": {
+        const cx = target ? target.x : Math.max(40, Math.min(ARENA_SIZE - 40, p.x + Math.cos(aimAngle) * 140));
+        const cy = target ? target.y : Math.max(40, Math.min(ARENA_SIZE - 40, p.y + Math.sin(aimAngle) * 140));
+        const radius = Math.max(150, p.range * 0.62);
+        const magicColor = p.weaponRarity === "ノーマル" ? "#c084fc" : rarityTheme.accent;
+
+        this.slashEffects.push({
+          x: cx,
+          y: cy,
+          angle: aimAngle,
+          arc: Math.PI * 2,
+          radius,
+          color: magicColor,
+          life: 0.42,
+          maxLife: 0.42,
+          kind: "magic_nova",
+          rarity: p.weaponRarity,
+        });
+        this.spawnParticles(cx, cy, magicColor, rarityTheme.sparkCount + 14);
+        this.screenShake = 0.2;
+
+        for (const e of [...this.enemies]) {
+          if (e.hp <= 0) continue;
+          const d = Math.hypot(e.x - cx, e.y - cy) - e.radius;
+          if (d <= radius) {
+            this.damageEnemy(e, p.atk * 2.55 + 20, Math.atan2(e.y - cy, e.x - cx), 140);
+          }
+        }
+        this.spawnFloatingText(p.x, p.y - 34, `${skillDef.name}！`, skillDef.color, 16);
+        break;
+      }
+    }
+
+    this.enemies = this.enemies.filter((e) => e.hp > 0);
     this.emitHud();
   }
 
@@ -662,11 +1021,30 @@ export class GameEngine {
   private damagePlayer(rawDmg: number) {
     const p = this.player;
     if (!p) return;
+    if (p.dashInvulnTimer > 0) return;
+
     const dmg = Math.max(1, Math.round(rawDmg - p.def * 0.65));
     p.hp -= dmg;
     p.hitFlash = 0.18;
     this.screenShake = 0.12;
-    SoundFX.playPlayerHurt();
+    if (p.shieldId) {
+      p.guardFlashTimer = 0.24;
+      SoundFX.playShieldBlock();
+      this.slashEffects.push({
+        x: p.x,
+        y: p.y,
+        angle: p.facingAngle,
+        arc: Math.PI * 1.1,
+        radius: 30,
+        color: "#60a5fa",
+        life: 0.18,
+        maxLife: 0.18,
+        kind: "guard",
+        rarity: p.weaponRarity,
+      });
+    } else {
+      SoundFX.playPlayerHurt();
+    }
     this.spawnFloatingText(p.x, p.y - 24, `-${dmg}`, "#ef4444", 15);
 
     if (p.hp <= 0) {
@@ -678,6 +1056,7 @@ export class GameEngine {
   private handlePlayerDeath() {
     this.paused = true;
     this.clearKeys();
+    SoundFX.playPlayerDeath();
     const reached = this.day;
     if (reached > SaveManager.data.bestDay) {
       SaveManager.data.bestDay = reached;
@@ -714,6 +1093,7 @@ export class GameEngine {
 
     if (this.day % 3 === 0 && this.potionCharges < this.potionMaxCharges) {
       this.potionCharges += 1;
+      SoundFX.playItemPickup();
       this.callbacks.onToast("回復薬を1つ補充した");
     }
 
@@ -731,6 +1111,7 @@ export class GameEngine {
       if (!SaveManager.data.unlockedCompanions.includes(key)) {
         SaveManager.data.unlockedCompanions.push(key);
         this.spawnSavedCompanions();
+        SoundFX.playItemPickup();
         this.callbacks.onToast(`新たな仲間「${COMPANION_CLASSES[key].name}」を救出した！`);
       }
     }
@@ -743,12 +1124,14 @@ export class GameEngine {
     if (isDay100BossClear) {
       this.paused = true;
       this.clearKeys();
+      SoundFX.playFinalVictory();
       this.callbacks.onVictory100();
     } else if (this.day % 10 === 0) {
-      SoundFX.playBossWarn();
+      SoundFX.playBossAppears();
       this.callbacks.onToast(`${this.day}日目: ボスが出現した！`);
     }
 
+    this.syncBgm();
     SaveManager.save();
     this.checkAndNotifyAchievements();
     this.callbacks.onSaveChanged();
@@ -764,6 +1147,22 @@ export class GameEngine {
     if (this.screenShake > 0) this.screenShake = Math.max(0, this.screenShake - dt);
     if (p.hitFlash > 0) p.hitFlash = Math.max(0, p.hitFlash - dt);
     if (p.attackAnimTimer > 0) p.attackAnimTimer = Math.max(0, p.attackAnimTimer - dt);
+    if (p.skillAnimTimer > 0) p.skillAnimTimer = Math.max(0, p.skillAnimTimer - dt);
+    if (p.dashInvulnTimer > 0) p.dashInvulnTimer = Math.max(0, p.dashInvulnTimer - dt);
+    if (p.guardFlashTimer > 0) p.guardFlashTimer = Math.max(0, p.guardFlashTimer - dt);
+
+    if (this.scheduledSwordWaves.length > 0) {
+      const remaining: typeof this.scheduledSwordWaves = [];
+      for (const w of this.scheduledSwordWaves) {
+        w.delay -= dt;
+        if (w.delay <= 0) {
+          this.executeSwordSkillWave(w.angle, w.waveIdx);
+        } else {
+          remaining.push(w);
+        }
+      }
+      this.scheduledSwordWaves = remaining;
+    }
 
     this.lastSaveTick += dt;
     if (this.lastSaveTick >= 5) {
@@ -1051,6 +1450,7 @@ export class GameEngine {
       if (proj.fromPlayer) {
         for (const e of this.enemies) {
           if (e.hp <= 0) continue;
+          if (proj.piercing && proj.hitTargets?.has(e)) continue;
           if (Math.hypot(e.x - proj.x, e.y - proj.y) <= e.radius + proj.radius) {
             if (proj.aoe > 0) {
               this.spawnParticles(proj.x, proj.y, proj.color, 10);
@@ -1062,8 +1462,13 @@ export class GameEngine {
             } else {
               this.damageEnemy(e, proj.dmg, Math.atan2(proj.vy, proj.vx), 45);
             }
-            proj.life = 0;
-            break;
+            if (proj.piercing) {
+              proj.hitTargets?.add(e);
+              this.spawnParticles(proj.x, proj.y, proj.color, 3);
+            } else {
+              proj.life = 0;
+              break;
+            }
           }
         }
       } else {
@@ -1114,7 +1519,8 @@ export class GameEngine {
     if (!this.player) return;
     const p = this.player;
     const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
-    const bossEntity = this.enemies.find((e) => e.isBoss) || null;
+    const skillDef = getWeaponSkillDef(p.weaponCategory);
+    const bossEntity = this.enemies.find((e) => e.isBoss && e.hp > 0) || null;
     const isBossDay = this.day % 10 === 0;
 
     this.callbacks.onHudUpdate({
@@ -1130,7 +1536,14 @@ export class GameEngine {
       isBossDay,
       areaName: getAreaForDay(this.day).name,
       elapsedTotal: this.elapsedTotal,
+      weaponId: p.weaponId,
       weaponName: weapon?.name || "素手",
+      weaponCategory: p.weaponCategory,
+      weaponRarity: p.weaponRarity,
+      shieldId: p.shieldId,
+      skillName: skillDef.name,
+      skillDesc: skillDef.desc,
+      skillColor: skillDef.color,
       skillCooldown: this.skillCooldown,
       skillMaxCd: this.skillMaxCd,
       potionCharges: this.potionCharges,

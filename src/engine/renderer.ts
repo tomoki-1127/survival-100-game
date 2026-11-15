@@ -2,11 +2,13 @@ import {
   AREA_BG_MAP,
   AREA_PROP_MAP,
   COMPANION_SPRITE_MAP,
+  EQUIPMENT_ICON_MAP,
   getLoadedSprite,
   HERO_SPRITE_PATH,
   MONSTER_SPRITE_MAP,
 } from "../data/assets";
 import { getAreaForDay } from "../data/monsters";
+import { getRarityVisualTheme } from "../data/weaponSkills";
 import type {
   AreaDef,
   CompanionEntity,
@@ -42,9 +44,91 @@ export interface RenderState {
 let flashCanvas: HTMLCanvasElement | null = null;
 let flashCtx: CanvasRenderingContext2D | null = null;
 
+// Cached unarmed hero canvas (removes the baked-in blue sword blade so any equipped weapon renders cleanly)
+let cachedUnarmedHeroSrc: HTMLImageElement | null = null;
+let cachedUnarmedHeroCanvas: HTMLCanvasElement | null = null;
+
+function getUnarmedHeroCanvas(heroImg: HTMLImageElement): HTMLImageElement | HTMLCanvasElement {
+  if (typeof document === "undefined") return heroImg;
+  if (cachedUnarmedHeroSrc === heroImg && cachedUnarmedHeroCanvas) {
+    return cachedUnarmedHeroCanvas;
+  }
+
+  const w = heroImg.naturalWidth || heroImg.width;
+  const h = heroImg.naturalHeight || heroImg.height;
+  if (!w || !h) return heroImg;
+
+  const off = document.createElement("canvas");
+  off.width = w;
+  off.height = h;
+  const octx = off.getContext("2d");
+  if (!octx) return heroImg;
+
+  octx.imageSmoothingEnabled = false;
+  octx.drawImage(heroImg, 0, 0);
+
+  try {
+    const imgData = octx.getImageData(0, 0, w, h);
+    const data = imgData.data;
+
+    const isCape = (px: number, py: number) => {
+      if (px < 0 || px >= w || py < 0 || py >= h) return false;
+      const idx = (py * w + px) * 4;
+      return data[idx + 3] > 128 && data[idx] > data[idx + 1] + 30 && data[idx] > data[idx + 2] + 30;
+    };
+
+    const sx = w / 160;
+    const sy = h / 160;
+
+    for (let y = Math.floor(88 * sy); y <= Math.min(h - 1, Math.ceil(146 * sy)); y++) {
+      for (let x = Math.floor(2 * sx); x <= Math.min(w - 1, Math.ceil(56 * sx)); x++) {
+        const idx = (y * w + x) * 4;
+        if (data[idx + 3] < 20) continue;
+        if (isCape(x, y)) continue;
+
+        const nx = x / sx;
+        const ny = y / sy;
+
+        // Preserve silver gauntlet upper cuff & right boot/greave
+        if (ny <= 92 && nx >= 40 && data[idx + 2] >= data[idx]) continue;
+        if (ny >= 112 && nx >= 47) continue;
+
+        const lx = 48 - (ny - 92) * 0.96;
+        const onBladeCorridor = ny >= 92 && Math.abs(nx - lx) <= 15.5 && nx <= 54;
+        if (!onBladeCorridor) continue;
+
+        let hasCapeL = false;
+        let hasCapeR = false;
+        for (let d = 1; d <= Math.ceil(12 * sx); d++) {
+          if (isCape(x - d, y)) hasCapeL = true;
+          if (isCape(x + d, y)) hasCapeR = true;
+        }
+        if (hasCapeL && hasCapeR && ny <= 126) {
+          data[idx] = 94;
+          data[idx + 1] = 16;
+          data[idx + 2] = 22;
+          data[idx + 3] = 255;
+        } else {
+          data[idx] = 0;
+          data[idx + 1] = 0;
+          data[idx + 2] = 0;
+          data[idx + 3] = 0;
+        }
+      }
+    }
+
+    octx.putImageData(imgData, 0, 0);
+    cachedUnarmedHeroSrc = heroImg;
+    cachedUnarmedHeroCanvas = off;
+    return off;
+  } catch {
+    return heroImg;
+  }
+}
+
 function drawTintedSprite(
   ctx: CanvasRenderingContext2D,
-  img: HTMLImageElement,
+  img: HTMLImageElement | HTMLCanvasElement,
   dx: number,
   dy: number,
   dw: number,
@@ -177,15 +261,245 @@ function drawGroundProp(ctx: CanvasRenderingContext2D, gp: GroundProp, area: Are
   }
 }
 
+function drawHeroShield(
+  ctx: CanvasRenderingContext2D,
+  p: PlayerState,
+  drawX: number,
+  drawY: number,
+  elapsed: number
+) {
+  if (!p.shieldId) return;
+  const shieldImg = getLoadedSprite(EQUIPMENT_ICON_MAP[p.shieldId]);
+  if (!shieldImg) return;
+
+  const isGuarding = p.guardFlashTimer > 0;
+  const shieldX = drawX - p.facingX * (isGuarding ? 14 : 11);
+  const shieldY = drawY - 1 + Math.sin(elapsed * 4.5) * 0.8;
+  const shieldSize = isGuarding ? 27 : 23;
+
+  ctx.save();
+  ctx.translate(shieldX, shieldY);
+  if (isGuarding) {
+    ctx.globalAlpha = 0.55;
+    ctx.fillStyle = "#60a5fa";
+    ctx.beginPath();
+    ctx.arc(0, 0, 16, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+  ctx.rotate(p.facingX * (isGuarding ? -0.18 : -0.06));
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(shieldImg, -shieldSize / 2, -shieldSize / 2, shieldSize, shieldSize);
+  ctx.restore();
+}
+
+function drawHeroWeapon(
+  ctx: CanvasRenderingContext2D,
+  p: PlayerState,
+  drawX: number,
+  drawY: number,
+  elapsed: number
+) {
+  const weaponImg = getLoadedSprite(EQUIPMENT_ICON_MAP[p.weaponId]);
+  if (!weaponImg) return;
+
+  const rarityTheme = getRarityVisualTheme(p.weaponRarity);
+  const isSkill = p.skillAnimTimer > 0;
+  const skillProgress = isSkill ? 1 - p.skillAnimTimer / Math.max(0.01, p.skillAnimMax) : 0;
+  const atkDur = p.weaponCategory === "大剣" ? 0.28 : 0.22;
+  const isAtk = p.attackAnimTimer > 0;
+  const atkProgress = isAtk ? 1 - p.attackAnimTimer / atkDur : 0;
+
+  // Hand anchor in world space (front/side hand facing aim)
+  const handX = drawX + p.facingX * 11;
+  const handY = drawY + 1;
+
+  // Sprite size by weapon category
+  const sizeByCat: Record<string, number> = {
+    剣: 34,
+    大剣: 50,
+    槍: 52,
+    斧: 38,
+    弓: 36,
+    杖: 40,
+  };
+  const weaponSize = sizeByCat[p.weaponCategory] || 34;
+
+  // All weapon PNGs except bow/dual-axe point bottom-left -> top-right (-PI/4).
+  // Adding +PI/4 aligns the weapon tip to 0 rad (pointing directly along +X).
+  const isDualAxe = p.weaponId === "wp_axe_berserk";
+  const restFacingAngle = p.facingX >= 0 ? -0.32 : Math.PI + 0.32;
+  const aimAngle = isAtk || isSkill ? p.facingAngle : restFacingAngle;
+
+  let drawAngle = aimAngle;
+  let extendDist = 6;
+  let gripOffsetX = -weaponSize * 0.26;
+  let gripOffsetY = weaponSize * 0.26;
+  let baseSpriteRotation = Math.PI / 4; // maps bottom-left->top-right (-45deg) to 0deg
+
+  switch (p.weaponCategory) {
+    case "剣": {
+      if (isSkill) {
+        // Rapid 3-wave alternating slash swings
+        const wave = Math.sin(skillProgress * Math.PI * 3);
+        drawAngle = aimAngle + wave * 1.15;
+        extendDist = 11;
+      } else if (isAtk) {
+        const swing = -1.25 + atkProgress * 2.4;
+        drawAngle = aimAngle + swing * (p.facingX >= 0 ? 1 : -1);
+        extendDist = 9;
+      } else {
+        drawAngle = p.facingX >= 0 ? -0.35 : Math.PI + 0.35;
+        extendDist = 5;
+      }
+      break;
+    }
+
+    case "大剣": {
+      if (isSkill) {
+        const sweep = -1.75 + skillProgress * 3.35;
+        drawAngle = aimAngle + sweep * (p.facingX >= 0 ? 1 : -1);
+        extendDist = 13;
+      } else if (isAtk) {
+        const sweep = -1.45 + atkProgress * 2.75;
+        drawAngle = aimAngle + sweep * (p.facingX >= 0 ? 1 : -1);
+        extendDist = 11;
+      } else {
+        // Heavy shoulder-resting stance
+        drawAngle = p.facingX >= 0 ? -0.95 : Math.PI + 0.95;
+        extendDist = 4;
+      }
+      break;
+    }
+
+    case "槍": {
+      if (isSkill) {
+        // Long forward thrust lunge
+        drawAngle = aimAngle;
+        extendDist = 18 + Math.sin(skillProgress * Math.PI) * 14;
+      } else if (isAtk) {
+        drawAngle = aimAngle;
+        extendDist = 6 + Math.sin(atkProgress * Math.PI) * 18;
+      } else {
+        drawAngle = p.facingX >= 0 ? -0.18 : Math.PI + 0.18;
+        extendDist = 6;
+      }
+      break;
+    }
+
+    case "斧": {
+      if (isDualAxe) {
+        baseSpriteRotation = 0;
+        gripOffsetX = 0;
+        gripOffsetY = 0;
+      }
+      if (isSkill) {
+        // Ground slam overhead -> impact
+        drawAngle = aimAngle + Math.sin(skillProgress * Math.PI) * 1.35 * p.facingX;
+        extendDist = 10 + (1 - Math.abs(skillProgress - 0.5) * 2) * 6;
+      } else if (isAtk) {
+        // 360-degree spin swing
+        drawAngle = aimAngle + atkProgress * Math.PI * 2 * p.facingX;
+        extendDist = 12;
+      } else {
+        drawAngle = p.facingX >= 0 ? -0.45 : Math.PI + 0.45;
+        extendDist = 5;
+      }
+      break;
+    }
+
+    case "弓": {
+      // Bow curves toward -135deg; +3*PI/4 aligns bow belly facing 0deg forward
+      baseSpriteRotation = (Math.PI * 3) / 4;
+      gripOffsetX = 0;
+      gripOffsetY = 0;
+      drawAngle = isAtk || isSkill ? aimAngle : p.facingX >= 0 ? 0.08 : Math.PI - 0.08;
+      extendDist = isAtk || isSkill ? 10 - Math.sin((isSkill ? skillProgress : atkProgress) * Math.PI) * 4 : 9;
+      break;
+    }
+
+    case "杖": {
+      if (isSkill || isAtk) {
+        const pulse = Math.sin((isSkill ? skillProgress : atkProgress) * Math.PI);
+        drawAngle = aimAngle - pulse * 0.4 * p.facingX;
+        extendDist = 9 + pulse * 6;
+      } else {
+        drawAngle = p.facingX >= 0 ? -0.78 : Math.PI + 0.78;
+        extendDist = 6;
+      }
+      break;
+    }
+  }
+
+  ctx.save();
+  ctx.translate(
+    handX + Math.cos(drawAngle) * extendDist,
+    handY + Math.sin(drawAngle) * extendDist
+  );
+
+  // Rarity & Weapon Aura Glow
+  if (p.weaponRarity !== "ノーマル" || p.weaponCategory === "杖") {
+    const auraColor =
+      p.weaponRarity !== "ノーマル" ? rarityTheme.glow : "rgba(192, 132, 252, 0.42)";
+    const tipDist = p.weaponCategory === "弓" ? 6 : weaponSize * 0.42;
+    const tipX = Math.cos(drawAngle) * tipDist;
+    const tipY = Math.sin(drawAngle) * tipDist;
+    const pulseR =
+      (p.weaponRarity !== "ノーマル" ? rarityTheme.auraRadius : 10) +
+      Math.sin(elapsed * 7) * 2.2;
+    ctx.fillStyle = auraColor;
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, Math.max(6, pulseR), 0, Math.PI * 2);
+    ctx.fill();
+  }
+
+  // Drawn bowstring + glowing arrow during bow attack/skill
+  if (p.weaponCategory === "弓" && (isAtk || isSkill)) {
+    ctx.save();
+    ctx.rotate(drawAngle);
+    ctx.strokeStyle = p.weaponRarity !== "ノーマル" ? rarityTheme.core : "#fef08a";
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(-4, 0);
+    ctx.lineTo(14, 0);
+    ctx.stroke();
+    ctx.fillStyle = "#ffffff";
+    ctx.beginPath();
+    ctx.moveTo(16, 0);
+    ctx.lineTo(11, -3);
+    ctx.lineTo(11, 3);
+    ctx.closePath();
+    ctx.fill();
+    ctx.restore();
+  }
+
+  ctx.rotate(drawAngle + baseSpriteRotation);
+  ctx.imageSmoothingEnabled = false;
+  ctx.drawImage(
+    weaponImg,
+    -weaponSize / 2 - gripOffsetX,
+    -weaponSize / 2 - gripOffsetY,
+    weaponSize,
+    weaponSize
+  );
+  ctx.restore();
+}
+
 function drawPlayerSprite(ctx: CanvasRenderingContext2D, p: PlayerState, elapsed: number) {
   const isMoving = p.walkPhase > 0;
   const idleBob = Math.sin(elapsed * 4.2) * 1.4;
   const walkBob = Math.abs(Math.sin(p.walkPhase)) * 3.5;
   const bob = isMoving ? -walkBob : idleBob;
-  const lunge = p.attackAnimTimer > 0 ? Math.sin((p.attackAnimTimer / 0.22) * Math.PI) * 7 : 0;
+  const lunge =
+    p.attackAnimTimer > 0 && p.weaponCategory !== "弓"
+      ? Math.sin((p.attackAnimTimer / (p.weaponCategory === "大剣" ? 0.28 : 0.22)) * Math.PI) *
+        (p.weaponCategory === "槍" ? 10 : 7)
+      : 0;
   const drawX = p.x + Math.cos(p.facingAngle) * lunge;
   const drawY = p.y + Math.sin(p.facingAngle) * lunge + bob;
   const tilt = isMoving ? Math.sin(p.walkPhase) * 0.06 : 0;
+
+  const rarityTheme = getRarityVisualTheme(p.weaponRarity);
 
   // Ground shadow
   ctx.fillStyle = "rgba(0,0,0,0.48)";
@@ -193,19 +507,33 @@ function drawPlayerSprite(ctx: CanvasRenderingContext2D, p: PlayerState, elapsed
   ctx.ellipse(p.x, p.y + 17, 17, 7.5, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  // Subtle hero golden aura ring
-  ctx.strokeStyle = "rgba(251, 191, 36, 0.28)";
-  ctx.lineWidth = 1.5;
+  // Rarity / Hero aura ring under feet
+  ctx.strokeStyle =
+    p.weaponRarity !== "ノーマル" ? rarityTheme.glow : "rgba(251, 191, 36, 0.28)";
+  ctx.lineWidth = p.weaponRarity === "レジェンダリー" ? 2.4 : 1.5;
   ctx.beginPath();
   ctx.ellipse(p.x, p.y + 16, 20, 9, 0, 0, Math.PI * 2);
   ctx.stroke();
 
+  // Spear dash invulnerability streak aura
+  if (p.dashInvulnTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.55;
+    ctx.strokeStyle = rarityTheme.accent;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.arc(drawX, drawY - 4, 24, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.restore();
+  }
+
   const heroImg = getLoadedSprite(HERO_SPRITE_PATH);
   if (heroImg) {
+    const baseHero = getUnarmedHeroCanvas(heroImg);
     const spriteSize = 58;
     drawTintedSprite(
       ctx,
-      heroImg,
+      baseHero,
       drawX,
       drawY - 8,
       spriteSize,
@@ -214,6 +542,22 @@ function drawPlayerSprite(ctx: CanvasRenderingContext2D, p: PlayerState, elapsed
       tilt,
       p.hitFlash > 0 ? 0.8 : 0
     );
+
+    // Draw equipped shield on off-hand and equipped weapon in main hand
+    drawHeroShield(ctx, p, drawX, drawY, elapsed);
+    drawHeroWeapon(ctx, p, drawX, drawY, elapsed);
+
+    // Orbiting pixel sparkles for Epic / Legendary weapons
+    if (p.weaponRarity === "エピック" || p.weaponRarity === "レジェンダリー") {
+      const orbCount = p.weaponRarity === "レジェンダリー" ? 3 : 2;
+      for (let i = 0; i < orbCount; i++) {
+        const a = elapsed * 3.4 + (i * Math.PI * 2) / orbCount;
+        const sx = drawX + Math.cos(a) * 24;
+        const sy = drawY - 4 + Math.sin(a) * 14;
+        ctx.fillStyle = rarityTheme.core;
+        ctx.fillRect(Math.round(sx - 1.5), Math.round(sy - 1.5), 3, 3);
+      }
+    }
     return;
   }
 
@@ -465,11 +809,106 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
   // 6. Player Hero
   drawPlayerSprite(ctx, p, state.elapsedTotal);
 
-  // 7. Glowing 16-bit Crescent Slash / Whirlwind / Skill Effects
+  // 7. Glowing 16-bit Crescent Slash / Thrust / Shockwave / Magic Nova / Guard Effects
   for (const s of state.slashEffects) {
     const alpha = Math.max(0, s.life / s.maxLife);
+    const prog = 1 - alpha;
     ctx.save();
-    if (s.arc >= Math.PI * 1.99) {
+
+    if (s.kind === "shockwave") {
+      // Axe ground-slam expanding crater & tremor waves
+      const r1 = s.radius * (0.35 + prog * 0.68);
+      const r2 = s.radius * (0.2 + prog * 0.55);
+      ctx.globalAlpha = alpha * 0.28;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r1, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = alpha * 0.95;
+      ctx.strokeStyle = "#fef3c7";
+      ctx.lineWidth = 5 * alpha + 2;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r1, 0, Math.PI * 2);
+      ctx.stroke();
+
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r2, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (s.kind === "magic_nova") {
+      // Staff AoE magic circle + expanding arcane detonation
+      const r = s.radius * (0.45 + prog * 0.58);
+      ctx.globalAlpha = alpha * 0.34;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      ctx.globalAlpha = alpha * 0.95;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // Rotating arcane hexagram inside circle
+      ctx.translate(s.x, s.y);
+      ctx.rotate(prog * 1.4);
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2.5;
+      for (let tri = 0; tri < 2; tri++) {
+        ctx.beginPath();
+        for (let v = 0; v < 3; v++) {
+          const a = (v * Math.PI * 2) / 3 + (tri * Math.PI) / 3;
+          const px = Math.cos(a) * r * 0.78;
+          const py = Math.sin(a) * r * 0.78;
+          if (v === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        }
+        ctx.closePath();
+        ctx.stroke();
+      }
+    } else if (s.kind === "thrust") {
+      // Spear piercing dash beam & wind streaks
+      const len = s.length || s.radius;
+      ctx.translate(s.x, s.y);
+      ctx.rotate(s.angle);
+      ctx.globalAlpha = alpha * 0.42;
+      ctx.fillStyle = s.color;
+      ctx.beginPath();
+      ctx.moveTo(0, -14 * alpha);
+      ctx.lineTo(len, 0);
+      ctx.lineTo(0, 14 * alpha);
+      ctx.closePath();
+      ctx.fill();
+
+      ctx.globalAlpha = alpha * 0.96;
+      ctx.strokeStyle = "#e0f2fe";
+      ctx.lineWidth = 4 * alpha + 1.5;
+      ctx.beginPath();
+      ctx.moveTo(6, 0);
+      ctx.lineTo(len, 0);
+      ctx.stroke();
+
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(14, -10);
+      ctx.lineTo(len * 0.85, -3);
+      ctx.moveTo(14, 10);
+      ctx.lineTo(len * 0.85, 3);
+      ctx.stroke();
+    } else if (s.kind === "guard") {
+      // Shield guard ripple arc
+      ctx.globalAlpha = alpha * 0.88;
+      ctx.strokeStyle = "#93c5fd";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.radius + prog * 10, s.angle - 1.1, s.angle + 1.1);
+      ctx.stroke();
+    } else if (s.arc >= Math.PI * 1.99) {
       // Whirlwind / Spin ring
       ctx.globalAlpha = alpha * 0.35;
       ctx.fillStyle = s.color;
@@ -481,7 +920,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
       ctx.strokeStyle = "#e0f2fe";
       ctx.lineWidth = 6 * alpha + 2;
       ctx.beginPath();
-      ctx.arc(s.x, s.y, s.radius * (0.94 + (1 - alpha) * 0.08), s.angle, s.angle + Math.PI * 1.55);
+      ctx.arc(s.x, s.y, s.radius * (0.94 + prog * 0.08), s.angle, s.angle + Math.PI * 1.55);
       ctx.stroke();
 
       ctx.strokeStyle = s.color;
@@ -490,13 +929,13 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
       ctx.arc(s.x, s.y, s.radius * 0.75, s.angle + Math.PI, s.angle + Math.PI * 2.4);
       ctx.stroke();
     } else {
-      // Glowing Crescent Slash Arc (matching target-game-design.jpeg)
+      // Glowing Crescent Slash / Greatsword Cleave Arc
       const rOuter = s.radius;
-      const rInner = Math.max(18, s.radius * 0.54);
+      const rInner = Math.max(18, s.radius * (s.kind === "cleave" ? 0.44 : 0.54));
       const startA = s.angle - s.arc / 2;
       const endA = s.angle + s.arc / 2;
 
-      ctx.globalAlpha = alpha * 0.32;
+      ctx.globalAlpha = alpha * (s.kind === "cleave" ? 0.4 : 0.32);
       ctx.fillStyle = s.color;
       ctx.beginPath();
       ctx.moveTo(s.x, s.y);
@@ -505,7 +944,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
       ctx.fill();
 
       ctx.globalAlpha = alpha * 0.95;
-      ctx.fillStyle = "#e0f2fe";
+      ctx.fillStyle = s.rarity === "レジェンダリー" ? "#fef9c3" : "#e0f2fe";
       ctx.beginPath();
       ctx.arc(s.x, s.y, rOuter, startA, endA);
       ctx.arc(s.x, s.y, rInner, endA, startA, true);
@@ -513,7 +952,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
       ctx.fill();
 
       ctx.strokeStyle = s.color === "#e2e8f0" ? "#38bdf8" : s.color;
-      ctx.lineWidth = 3.5;
+      ctx.lineWidth = s.kind === "cleave" ? 5 : 3.5;
       ctx.beginPath();
       ctx.arc(s.x, s.y, rOuter, startA, endA);
       ctx.stroke();
@@ -521,25 +960,38 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
     ctx.restore();
   }
 
-  // 8. Projectiles (Arrows, Magic Orbs, Enemy Bolts)
+  // 8. Projectiles (Arrows, Piercing Arrows, Magic Orbs, Enemy Bolts)
   for (const pr of state.projectiles) {
     ctx.save();
     if (pr.fromPlayer && pr.aoe === 0) {
-      // Arrow with shaft & fletching
       const ang = Math.atan2(pr.vy, pr.vx);
+      const isPierce = pr.visualKind === "pierce_arrow" || pr.piercing;
       ctx.translate(pr.x, pr.y);
       ctx.rotate(ang);
-      ctx.strokeStyle = "#fef08a";
-      ctx.lineWidth = 3;
+
+      if (isPierce) {
+        ctx.globalAlpha = 0.42;
+        ctx.strokeStyle = pr.color;
+        ctx.lineWidth = 7;
+        ctx.beginPath();
+        ctx.moveTo(-24, 0);
+        ctx.lineTo(12, 0);
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+
+      ctx.strokeStyle = isPierce ? pr.color : "#fef08a";
+      ctx.lineWidth = isPierce ? 3.5 : 3;
       ctx.beginPath();
-      ctx.moveTo(-10, 0);
-      ctx.lineTo(8, 0);
+      ctx.moveTo(isPierce ? -16 : -10, 0);
+      ctx.lineTo(isPierce ? 12 : 8, 0);
       ctx.stroke();
+
       ctx.fillStyle = "#ffffff";
       ctx.beginPath();
-      ctx.moveTo(10, 0);
-      ctx.lineTo(4, -3.5);
-      ctx.lineTo(4, 3.5);
+      ctx.moveTo(isPierce ? 15 : 10, 0);
+      ctx.lineTo(isPierce ? 6 : 4, isPierce ? -4.5 : -3.5);
+      ctx.lineTo(isPierce ? 6 : 4, isPierce ? 4.5 : 3.5);
       ctx.closePath();
       ctx.fill();
     } else {

@@ -1,9 +1,8 @@
 import { Coins, Menu, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EQUIPMENT_ICON_MAP, HERO_PORTRAIT_PATH, SKILL_ICON_MAP } from "../data/assets";
-import { getEquipmentById } from "../data/equipment";
+import { getWeaponSkillDef } from "../data/weaponSkills";
 import type { HudSnapshot } from "../types/game";
-import { SaveManager } from "../utils/saveManager";
 import { PixelSprite } from "./PixelSprite";
 
 interface GameHudProps {
@@ -152,8 +151,7 @@ export function GameHud({
   const hpPct = Math.max(0, Math.min(100, (hud.hp / Math.max(1, hud.maxHp)) * 100));
   const xpPct = Math.max(0, Math.min(100, (hud.xp / Math.max(1, hud.nextXp)) * 100));
 
-  const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
-  const weaponIcon = weapon ? EQUIPMENT_ICON_MAP[weapon.id] : SKILL_ICON_MAP.autoAttack;
+  const weaponIcon = EQUIPMENT_ICON_MAP[hud.weaponId] || SKILL_ICON_MAP.autoAttack;
 
   const skillReady = hud.skillCooldown <= 0;
   const skillCdRatio = Math.max(0, Math.min(1, hud.skillCooldown / Math.max(0.1, hud.skillMaxCd)));
@@ -449,7 +447,7 @@ export function GameHud({
               </span>
             </button>
 
-            {/* Primary Active Skill: Whirlwind */}
+            {/* Primary Active Skill (Dynamic per equipped weapon) */}
             <button
               type="button"
               disabled={!skillReady}
@@ -464,19 +462,31 @@ export function GameHud({
                 if (performance.now() - lastSkillPointerDownAtRef.current < 400) return;
                 if (skillReady) onUseSkill();
               }}
-              aria-label={skillReady ? "旋風斬り 使用可能" : `旋風斬り クールダウン残り${Math.ceil(hud.skillCooldown)}秒`}
+              aria-label={
+                skillReady
+                  ? `${hud.skillName} 使用可能`
+                  : `${hud.skillName} クールダウン残り${Math.ceil(hud.skillCooldown)}秒`
+              }
+              style={
+                skillReady
+                  ? {
+                      borderColor: hud.skillColor,
+                      boxShadow: `0 0 22px ${hud.skillColor}66, inset 0 0 12px ${hud.skillColor}38`,
+                    }
+                  : undefined
+              }
               className={`combat-touch-surface relative w-[74px] h-[74px] rounded-2xl flex items-center justify-center transition-transform active:scale-95 overflow-visible ${
                 skillReady
-                  ? "bg-[#0d1424]/92 border-2 border-[#facc15] shadow-[0_0_22px_rgba(250,204,21,0.42),inset_0_0_12px_rgba(250,204,21,0.22)] cursor-pointer"
+                  ? "bg-[#0d1424]/92 border-2 cursor-pointer"
                   : "bg-[#0b101b]/88 border-2 border-slate-600/80 cursor-not-allowed"
               }`}
             >
               <div className="relative w-14 h-14 rounded-xl overflow-hidden flex items-center justify-center">
                 <PixelSprite
-                  src={SKILL_ICON_MAP.whirlwind}
-                  alt="旋風斬り"
-                  className={`w-13 h-13 ${skillReady ? "" : "grayscale opacity-45"}`}
-                  fallbackText="斬"
+                  src={weaponIcon}
+                  alt={hud.skillName}
+                  className={`w-12 h-12 ${skillReady ? "" : "grayscale opacity-45"}`}
+                  fallbackText="技"
                 />
                 {!skillReady && (
                   <>
@@ -491,13 +501,13 @@ export function GameHud({
                 )}
               </div>
               <span
-                className={`absolute -bottom-2 px-2 py-0.5 rounded text-[10px] font-extrabold border leading-tight whitespace-nowrap ${
+                className={`absolute -bottom-2 px-1.5 py-0.5 rounded text-[10px] font-extrabold border leading-tight whitespace-nowrap ${
                   skillReady
-                    ? "bg-amber-950/95 text-amber-200 border-[#facc15]"
+                    ? "bg-slate-950/95 text-amber-100 border-[#facc15]"
                     : "bg-slate-950 text-slate-400 border-slate-700"
                 }`}
               >
-                {skillReady ? "旋風斬り" : "待機中"}
+                {skillReady ? getWeaponSkillDef(hud.weaponCategory).shortName : "待機中"}
               </span>
             </button>
           </div>
@@ -508,7 +518,7 @@ export function GameHud({
           <button
             type="button"
             onClick={() => onOpenMenu("equip")}
-            className="group relative flex flex-col items-center p-1.5 rounded-lg bg-[#0b101b]/92 hover:bg-[#131c2e] border-2 border-[#c89b3c]/80 shadow-lg cursor-pointer transition-transform active:scale-95 w-[78px]"
+            className="group relative flex flex-col items-center p-1.5 rounded-lg bg-[#0b101b]/92 hover:bg-[#131c2e] border-2 border-[#c89b3c]/80 shadow-lg cursor-pointer transition-transform active:scale-95 w-[82px]"
           >
             <div className="w-11 h-11 rounded bg-slate-950 border border-slate-700/80 flex items-center justify-center overflow-hidden">
               <PixelSprite src={weaponIcon} alt={hud.weaponName} className="w-10 h-10" fallbackText="武" />
@@ -525,18 +535,24 @@ export function GameHud({
             type="button"
             onClick={onUseSkill}
             disabled={!skillReady}
-            className={`group relative flex flex-col items-center p-1.5 rounded-lg bg-[#0b101b]/92 hover:bg-[#131c2e] border-2 transition-transform active:scale-95 w-[78px] ${
+            style={
               skillReady
-                ? "border-[#facc15] shadow-[0_0_16px_rgba(250,204,21,0.28)] cursor-pointer"
-                : "border-slate-700 opacity-75 cursor-not-allowed"
+                ? {
+                    borderColor: hud.skillColor,
+                    boxShadow: `0 0 16px ${hud.skillColor}48`,
+                  }
+                : undefined
+            }
+            className={`group relative flex flex-col items-center p-1.5 rounded-lg bg-[#0b101b]/92 hover:bg-[#131c2e] border-2 transition-transform active:scale-95 w-[84px] ${
+              skillReady ? "cursor-pointer" : "border-slate-700 opacity-75 cursor-not-allowed"
             }`}
           >
-            <div className="relative w-11 h-11 rounded bg-slate-950 border border-sky-400/50 flex items-center justify-center overflow-hidden">
+            <div className="relative w-11 h-11 rounded bg-slate-950 border border-sky-400/40 flex items-center justify-center overflow-hidden">
               <PixelSprite
-                src={SKILL_ICON_MAP.whirlwind}
-                alt="旋風斬り"
-                className={`w-11 h-11 ${skillReady ? "" : "grayscale opacity-50"}`}
-                fallbackText="斬"
+                src={weaponIcon}
+                alt={hud.skillName}
+                className={`w-10 h-10 ${skillReady ? "" : "grayscale opacity-50"}`}
+                fallbackText="技"
               />
               {!skillReady && (
                 <div className="absolute inset-0 bg-slate-950/75 flex items-center justify-center text-sm font-extrabold text-amber-300 font-mono-num">
@@ -544,7 +560,9 @@ export function GameHud({
                 </div>
               )}
             </div>
-            <span className="mt-1 text-[10px] font-bold text-slate-100 whitespace-nowrap">旋風斬り</span>
+            <span className="mt-1 text-[10px] font-bold text-slate-100 whitespace-nowrap truncate max-w-full">
+              {hud.skillName}
+            </span>
             <span className="absolute -top-2 right-1 px-1 rounded bg-slate-950 border border-[#c89b3c] text-[9px] font-bold text-amber-300 font-mono-num">
               E/Spc
             </span>

@@ -99,6 +99,35 @@ export const EQUIPMENT_ICON_MAP: Record<string, string> = {
   ac_phoenix: assetUrl("assets/armors/ac-phoenix.png"),
 };
 
+// 8. audio: BGM・効果音（public/audio/ 配下の実在WAVファイル）
+export const AUDIO_BGM_MAP = {
+  home_shop: assetUrl("audio/01_home_shop.wav"),
+  forest: assetUrl("audio/02_forest.wav"),
+  cave: assetUrl("audio/03_cave.wav"),
+  wasteland: assetUrl("audio/04_wasteland.wav"),
+  icefield: assetUrl("audio/05_icefield.wav"),
+  demon_realm: assetUrl("audio/06_demon_realm.wav"),
+  boss: assetUrl("audio/07_boss.wav"),
+  final_boss_day100: assetUrl("audio/08_final_boss_day100.wav"),
+  endless: assetUrl("audio/09_endless.wav"),
+} as const;
+
+export const AUDIO_SFX_MAP = {
+  sword_slash: assetUrl("audio/sfx_sword_slash.wav"),
+  magic: assetUrl("audio/sfx_magic.wav"),
+  level_up: assetUrl("audio/sfx_level_up.wav"),
+  coin: assetUrl("audio/sfx_coin.wav"),
+  boss_appears: assetUrl("audio/sfx_boss_appears.wav"),
+  item_pickup: assetUrl("audio/sfx_item_pickup.wav"),
+  purchase: assetUrl("audio/sfx_purchase.wav"),
+  skill: assetUrl("audio/sfx_skill.wav"),
+  player_death: assetUrl("audio/sfx_player_death.wav"),
+  final_victory: assetUrl("audio/sfx_final_victory.wav"),
+} as const;
+
+export type BgmTrackId = keyof typeof AUDIO_BGM_MAP;
+export type SfxTrackId = keyof typeof AUDIO_SFX_MAP;
+
 interface CachedSprite {
   img: HTMLImageElement;
   loaded: boolean;

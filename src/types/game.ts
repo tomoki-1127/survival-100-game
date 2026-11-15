@@ -125,6 +125,13 @@ export interface AchievementDef {
   check: (save: SaveData) => boolean;
 }
 
+export interface AudioSettings {
+  bgmVolume: number;
+  sfxVolume: number;
+  bgmMuted: boolean;
+  sfxMuted: boolean;
+}
+
 export interface PlayerState {
   x: number;
   y: number;
@@ -133,6 +140,14 @@ export interface PlayerState {
   facingX: number;
   walkPhase: number;
   attackAnimTimer: number;
+  skillAnimTimer: number;
+  skillAnimMax: number;
+  dashInvulnTimer: number;
+  guardFlashTimer: number;
+  weaponId: string;
+  weaponCategory: EquipCategory;
+  weaponRarity: Rarity;
+  shieldId: string | null;
   level: number;
   xp: number;
   nextXp: number;
@@ -228,6 +243,9 @@ export interface ProjectileEntity {
   aoe: number;
   color: string;
   life: number;
+  piercing?: boolean;
+  hitTargets?: Set<EnemyEntity>;
+  visualKind?: "arrow" | "pierce_arrow" | "magic" | "enemy";
 }
 
 export interface SlashEffect {
@@ -239,6 +257,9 @@ export interface SlashEffect {
   color: string;
   life: number;
   maxLife: number;
+  kind?: "slash" | "cleave" | "thrust" | "spin" | "shockwave" | "magic_nova" | "guard";
+  rarity?: Rarity;
+  length?: number;
 }
 
 export interface ParticleEffect {
@@ -295,7 +316,14 @@ export interface HudSnapshot {
   isBossDay: boolean;
   areaName: string;
   elapsedTotal: number;
+  weaponId: string;
   weaponName: string;
+  weaponCategory: EquipCategory;
+  weaponRarity: Rarity;
+  shieldId: string | null;
+  skillName: string;
+  skillDesc: string;
+  skillColor: string;
   skillCooldown: number;
   skillMaxCd: number;
   potionCharges: number;

@@ -1,6 +1,7 @@
 import { X } from "lucide-react";
 import type { HudSnapshot, PerkDef, SaveData } from "../types/game";
 import { SoundFX } from "../utils/sound";
+import { AudioSettingsPanel } from "./AudioSettingsPanel";
 import {
   EquipmentLoadoutPanel,
   EquipmentShopPanel,
@@ -73,7 +74,7 @@ export function GameMenuModal({
     { id: "equip", label: "装備変更" },
     { id: "shop", label: "武器・防具ショップ" },
     { id: "bestiary", label: "図鑑・実績" },
-    { id: "system", label: "拠点へ戻る" },
+    { id: "system", label: "音量・拠点" },
   ];
 
   return (
@@ -155,6 +156,17 @@ export function GameMenuModal({
                   <strong className="font-mono-num">{hud.playerStats.range}px</strong>
                 </div>
               </div>
+              <div className="df-card p-3.5 rounded-lg border border-[#8f6b24]/60 space-y-1">
+                <div className="flex items-center justify-between text-xs sm:text-sm">
+                  <span className="font-bold text-amber-300">
+                    武器スキル: {hud.skillName}（{hud.weaponCategory}）
+                  </span>
+                  <span className="font-mono-num text-xs text-slate-300">
+                    CD {hud.skillMaxCd}秒
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300">{hud.skillDesc}</p>
+              </div>
               <p className="text-xs text-slate-400">
                 同行中の仲間: {hud.companionCount}人（150日目以降、50日ごとに救出イベントが発生します）
               </p>
@@ -189,17 +201,25 @@ export function GameMenuModal({
           )}
 
           {activeTab === "system" && (
-            <div className="space-y-4">
-              <p className="text-sm text-slate-300">
-                現在の冒険を終了して拠点へ戻りますか？獲得したコインや最高到達日数、図鑑の記録は保持されます。
-              </p>
-              <button
-                type="button"
-                onClick={onAbandonToHub}
-                className="px-4 py-2.5 rounded-lg bg-rose-700 hover:bg-rose-600 border border-rose-400/60 text-white text-sm font-bold cursor-pointer"
-              >
-                拠点へ戻る
-              </button>
+            <div className="space-y-5">
+              <div>
+                <h3 className="text-sm font-bold text-amber-200 mb-2.5">サウンド設定</h3>
+                <AudioSettingsPanel compact />
+              </div>
+
+              <div className="pt-4 border-t border-slate-800 space-y-3">
+                <h3 className="text-sm font-bold text-amber-200">冒険の中断</h3>
+                <p className="text-sm text-slate-300">
+                  現在の冒険を終了して拠点へ戻りますか？獲得したコインや最高到達日数、図鑑の記録は保持されます。
+                </p>
+                <button
+                  type="button"
+                  onClick={onAbandonToHub}
+                  className="px-4 py-2.5 rounded-lg bg-rose-700 hover:bg-rose-600 border border-rose-400/60 text-white text-sm font-bold cursor-pointer"
+                >
+                  拠点へ戻る
+                </button>
+              </div>
             </div>
           )}
         </div>

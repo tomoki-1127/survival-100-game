@@ -25,7 +25,13 @@ export default function App() {
   const [saveSnapshot, setSaveSnapshot] = useState<SaveData>(() => SaveManager.load());
   const [screenMode, setScreenMode] = useState<"hub" | "playing">("hub");
   const [hud, setHud] = useState<HudSnapshot | null>(null);
-  const [muted, setMuted] = useState(false);
+  const [muted, setMuted] = useState(() => SoundFX.muted);
+
+  useEffect(() => {
+    return SoundFX.subscribe((s) => {
+      setMuted(s.bgmMuted && s.sfxMuted);
+    });
+  }, []);
 
   const [menuTab, setMenuTab] = useState<GameMenuTab | null>(null);
   const [levelUpState, setLevelUpState] = useState<{ level: number; choices: PerkDef[] } | null>(
@@ -108,12 +114,16 @@ export default function App() {
     if (!engine || engine.mode !== "playing") return;
     engine.paused = true;
     engine.clearKeys();
+    engine.setInShopMenu(tab === "shop");
     setMenuTab(tab);
   }, []);
 
   const handleCloseMenu = useCallback(() => {
     setMenuTab(null);
     const engine = engineRef.current;
+    if (engine) {
+      engine.setInShopMenu(false);
+    }
     if (engine && engine.mode === "playing" && !levelUpState && !deathSummary && !showVictory) {
       engine.paused = false;
     }
@@ -183,12 +193,11 @@ export default function App() {
   };
 
   const handleToggleMute = useCallback(() => {
-    setMuted((prev) => {
-      const next = !prev;
-      SoundFX.muted = next;
-      if (!next) SoundFX.playClick();
-      return next;
-    });
+    SoundFX.unlockFromUserGesture();
+    const next = !SoundFX.muted;
+    SoundFX.muted = next;
+    setMuted(next);
+    if (!next) SoundFX.playClick();
   }, []);
 
   const handleUseSkill = useCallback(() => {
@@ -256,7 +265,10 @@ export default function App() {
       {menuTab && hud && (
         <GameMenuModal
           activeTab={menuTab}
-          onTabChange={setMenuTab}
+          onTabChange={(nextTab) => {
+            setMenuTab(nextTab);
+            engineRef.current?.setInShopMenu(nextTab === "shop");
+          }}
           onClose={handleCloseMenu}
           hud={hud}
           save={saveSnapshot}

@@ -1,7 +1,9 @@
-import { Coins, Compass, Play, Shield, Sparkles, Trophy, Volume2, VolumeX } from "lucide-react";
+import { Coins, Compass, Play, Shield, SlidersHorizontal, Sparkles, Trophy, Volume2, VolumeX } from "lucide-react";
 import { type CSSProperties, useEffect, useRef, useState } from "react";
-import { COMPANION_SPRITE_MAP, HERO_SPRITE_PATH } from "../data/assets";
+import { COMPANION_SPRITE_MAP, EQUIPMENT_ICON_MAP, HERO_SPRITE_PATH } from "../data/assets";
+import { getEquipmentById } from "../data/equipment";
 import { COMPANION_CLASSES } from "../data/upgrades";
+import { getWeaponSkillDef } from "../data/weaponSkills";
 import type { SaveData } from "../types/game";
 import {
   evaluateAchievements,
@@ -10,6 +12,7 @@ import {
   unlockAllWeaponsSecret,
 } from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
+import { AudioSettingsModal } from "./AudioSettingsPanel";
 import { PixelSprite } from "./PixelSprite";
 import {
   EquipmentLoadoutPanel,
@@ -51,6 +54,7 @@ export function HubScreen({
   onToast,
 }: HubScreenProps) {
   const [activeTab, setActiveTab] = useState<HubTab>("shop");
+  const [showAudioModal, setShowAudioModal] = useState(false);
   const [secretCelebration, setSecretCelebration] = useState<SecretUnlockResult | null>(null);
 
   const tapCountRef = useRef(0);
@@ -59,6 +63,9 @@ export function HubScreen({
   const celebrationTimerRef = useRef<number | null>(null);
 
   const baseStats = getBaseHubStats(save);
+  const equippedWeapon = getEquipmentById(save.equipped.weapon);
+  const equippedShield = getEquipmentById(save.equipped.shield);
+  const equippedSkill = getWeaponSkillDef(equippedWeapon?.category || "剣");
 
   useEffect(() => {
     return () => {
@@ -129,8 +136,34 @@ export function HubScreen({
         <header className="df-panel p-4 sm:p-6 rounded-xl space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
             <div className="flex items-center gap-3.5 sm:gap-4">
-              <div className="w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-lg bg-slate-950/90 border-2 border-[#c89b3c] shadow-[0_0_18px_rgba(200,155,60,0.22)] flex items-center justify-center">
+              <div className="relative w-16 h-16 sm:w-20 sm:h-20 shrink-0 rounded-lg bg-slate-950/90 border-2 border-[#c89b3c] shadow-[0_0_18px_rgba(200,155,60,0.22)] flex items-center justify-center">
                 <PixelSprite src={HERO_SPRITE_PATH} alt="主人公" className="w-14 h-14 sm:w-18 sm:h-18" fallbackText="勇" />
+                {equippedWeapon && (
+                  <div
+                    title={`装備武器: ${equippedWeapon.name}（スキル: ${equippedSkill.name}）`}
+                    className="absolute -bottom-1.5 -right-1.5 w-7 h-7 sm:w-8 sm:h-8 rounded-md bg-slate-950 border border-[#c89b3c] shadow flex items-center justify-center p-0.5"
+                  >
+                    <PixelSprite
+                      src={EQUIPMENT_ICON_MAP[equippedWeapon.id]}
+                      alt={equippedWeapon.name}
+                      className="w-6 h-6"
+                      fallbackText="武"
+                    />
+                  </div>
+                )}
+                {equippedShield && (
+                  <div
+                    title={`装備盾: ${equippedShield.name}`}
+                    className="absolute -bottom-1.5 -left-1.5 w-6 h-6 sm:w-7 sm:h-7 rounded-md bg-slate-950 border border-sky-500/80 shadow flex items-center justify-center p-0.5"
+                  >
+                    <PixelSprite
+                      src={EQUIPMENT_ICON_MAP[equippedShield.id]}
+                      alt={equippedShield.name}
+                      className="w-5 h-5"
+                      fallbackText="盾"
+                    />
+                  </div>
+                )}
               </div>
               <div className="space-y-1">
                 <h1 className="font-display text-2xl sm:text-4xl font-extrabold tracking-wider drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
@@ -147,10 +180,28 @@ export function HubScreen({
                 <p className="text-xs sm:text-sm text-slate-300">
                   16bitダークファンタジー2DサバイバルRPG — 100日目の魔王討伐とエンドレス記録に挑戦
                 </p>
+                {equippedWeapon && (
+                  <p className="text-[11px] sm:text-xs text-sky-300/95 font-semibold">
+                    装備中: {equippedWeapon.name} · スキル「{equippedSkill.name}」
+                  </p>
+                )}
               </div>
             </div>
 
-            <div className="flex items-center gap-2.5 shrink-0">
+            <div className="flex items-center gap-2 shrink-0">
+              <button
+                type="button"
+                onClick={() => {
+                  SoundFX.playClick();
+                  setShowAudioModal(true);
+                }}
+                aria-label="音量設定を開く"
+                title="音量設定（BGM・効果音）"
+                className="inline-flex items-center gap-1.5 px-2.5 py-2.5 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-200 border border-[#8f6b24] text-xs font-bold transition-colors cursor-pointer"
+              >
+                <SlidersHorizontal className="w-4 h-4" />
+                <span className="hidden sm:inline">音量</span>
+              </button>
               <button
                 type="button"
                 onClick={onToggleMute}
@@ -329,6 +380,8 @@ export function HubScreen({
           </div>
         </div>
       )}
+
+      {showAudioModal && <AudioSettingsModal onClose={() => setShowAudioModal(false)} />}
     </div>
   );
 }
