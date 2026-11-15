@@ -1,3 +1,4 @@
+import { Trophy } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { GameHud } from "./components/GameHud";
 import { HubScreen } from "./components/HubScreen";
@@ -6,11 +7,19 @@ import {
   GameMenuModal,
   type GameMenuTab,
   LevelUpModal,
+  MimicRewardModal,
   VictoryEndlessModal,
 } from "./components/Modals";
 import { GameEngine } from "./engine/GameEngine";
-import type { HudSnapshot, PerkDef, SaveData } from "./types/game";
-import { SaveManager } from "./utils/saveManager";
+import type {
+  AchievementDef,
+  GameSpeed,
+  HudSnapshot,
+  MimicRewardSummary,
+  PerkDef,
+  SaveData,
+} from "./types/game";
+import { equipEquipmentItem, SaveManager } from "./utils/saveManager";
 import { SoundFX } from "./utils/sound";
 
 interface ToastItem {
@@ -44,8 +53,11 @@ export default function App() {
     totalCoins: number;
   } | null>(null);
   const [showVictory, setShowVictory] = useState(false);
+  const [mimicReward, setMimicReward] = useState<MimicRewardSummary | null>(null);
+  const [achBanner, setAchBanner] = useState<AchievementDef | null>(null);
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const toastIdRef = useRef(1);
+  const achTimerRef = useRef<number | null>(null);
 
   const pushToast = useCallback((text: string) => {
     const id = toastIdRef.current++;
@@ -55,16 +67,37 @@ export default function App() {
     }, 2650);
   }, []);
 
+  const showAchievementUnlock = useCallback((ach: AchievementDef) => {
+    setAchBanner(ach);
+    if (achTimerRef.current !== null) {
+      window.clearTimeout(achTimerRef.current);
+    }
+    achTimerRef.current = window.setTimeout(() => {
+      setAchBanner(null);
+      achTimerRef.current = null;
+    }, 3400);
+  }, []);
+
   const refreshSave = useCallback(() => {
+    const d = SaveManager.data;
     setSaveSnapshot({
-      ...SaveManager.data,
-      equipped: { ...SaveManager.data.equipped },
-      permUpgrades: { ...SaveManager.data.permUpgrades },
-      bestiary: { ...SaveManager.data.bestiary },
-      ownedEquipment: [...SaveManager.data.ownedEquipment],
-      achievements: [...SaveManager.data.achievements],
-      unlockedCompanions: [...SaveManager.data.unlockedCompanions],
-      stats: { ...SaveManager.data.stats },
+      ...d,
+      equipped: { ...d.equipped },
+      permUpgrades: { ...d.permUpgrades },
+      bestiary: { ...d.bestiary },
+      bestiaryRecords: { ...d.bestiaryRecords },
+      mimicState: {
+        plannedDayByBlock: { ...d.mimicState.plannedDayByBlock },
+        spawnedBlocks: [...d.mimicState.spawnedBlocks],
+        defeatedBlocks: [...d.mimicState.defeatedBlocks],
+        rewardedBlocks: [...d.mimicState.rewardedBlocks],
+        totalMimicDefeated: d.mimicState.totalMimicDefeated,
+      },
+      bestiaryRewardsClaimed: { ...d.bestiaryRewardsClaimed },
+      ownedEquipment: [...d.ownedEquipment],
+      achievements: [...d.achievements],
+      unlockedCompanions: [...d.unlockedCompanions],
+      stats: { ...d.stats },
     });
   }, []);
 
@@ -78,6 +111,8 @@ export default function App() {
       onLevelUp: (level, choices) => setLevelUpState({ level, choices }),
       onDeath: (summary) => setDeathSummary(summary),
       onVictory100: () => setShowVictory(true),
+      onMimicReward: (summary) => setMimicReward(summary),
+      onAchievementUnlock: showAchievementUnlock,
       onSaveChanged: refreshSave,
     });
 
@@ -104,10 +139,11 @@ export default function App() {
       window.removeEventListener("resize", handleResize);
       window.visualViewport?.removeEventListener("resize", handleResize);
       window.removeEventListener("beforeunload", handleBeforeUnload);
+      if (achTimerRef.current !== null) window.clearTimeout(achTimerRef.current);
       engine.stopLoop();
       engineRef.current = null;
     };
-  }, [pushToast, refreshSave]);
+  }, [pushToast, refreshSave, showAchievementUnlock]);
 
   const handleOpenMenu = useCallback((tab: GameMenuTab = "stats") => {
     const engine = engineRef.current;
@@ -124,10 +160,17 @@ export default function App() {
     if (engine) {
       engine.setInShopMenu(false);
     }
-    if (engine && engine.mode === "playing" && !levelUpState && !deathSummary && !showVictory) {
+    if (
+      engine &&
+      engine.mode === "playing" &&
+      !levelUpState &&
+      !deathSummary &&
+      !showVictory &&
+      !mimicReward
+    ) {
       engine.paused = false;
     }
-  }, [deathSummary, levelUpState, showVictory]);
+  }, [deathSummary, levelUpState, mimicReward, showVictory]);
 
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -139,7 +182,7 @@ export default function App() {
         if (e.code === "Escape") {
           if (menuTab) {
             handleCloseMenu();
-          } else if (!levelUpState && !deathSummary && !showVictory) {
+          } else if (!levelUpState && !deathSummary && !showVictory && !mimicReward) {
             handleOpenMenu("stats");
           }
         } else if (!engine.paused) {
@@ -171,13 +214,14 @@ export default function App() {
       window.removeEventListener("keyup", onKeyUp);
       window.removeEventListener("blur", onBlur);
     };
-  }, [deathSummary, handleCloseMenu, handleOpenMenu, levelUpState, menuTab, showVictory]);
+  }, [deathSummary, handleCloseMenu, handleOpenMenu, levelUpState, menuTab, mimicReward, showVictory]);
 
   const handleStartAdventure = () => {
     setDeathSummary(null);
     setLevelUpState(null);
     setMenuTab(null);
     setShowVictory(false);
+    setMimicReward(null);
     setScreenMode("playing");
     engineRef.current?.startNewRun();
   };
@@ -187,6 +231,7 @@ export default function App() {
     setLevelUpState(null);
     setMenuTab(null);
     setShowVictory(false);
+    setMimicReward(null);
     engineRef.current?.returnToHub();
     setScreenMode("hub");
     refreshSave();
@@ -200,6 +245,11 @@ export default function App() {
     if (!next) SoundFX.playClick();
   }, []);
 
+  const handleChangeSpeed = useCallback((speed: GameSpeed) => {
+    SoundFX.playClick();
+    engineRef.current?.setGameSpeed(speed);
+  }, []);
+
   const handleUseSkill = useCallback(() => {
     engineRef.current?.triggerActiveSkill();
   }, []);
@@ -211,6 +261,19 @@ export default function App() {
   const handleJoystickMove = useCallback((x: number, y: number, active: boolean) => {
     engineRef.current?.setJoystick(x, y, active);
   }, []);
+
+  const closeMimicModalAndResume = (equipItemId?: string) => {
+    if (equipItemId) {
+      const equipped = equipEquipmentItem(equipItemId);
+      if (equipped) {
+        engineRef.current?.recalculatePlayerStats();
+        pushToast(`${equipped.name}を装備しました`);
+      }
+    }
+    setMimicReward(null);
+    refreshSave();
+    engineRef.current?.resumeAfterMimicReward();
+  };
 
   return (
     <div
@@ -240,8 +303,9 @@ export default function App() {
         <GameHud
           hud={hud}
           muted={muted}
-          paused={Boolean(menuTab || levelUpState || deathSummary || showVictory)}
+          paused={Boolean(menuTab || levelUpState || deathSummary || showVictory || mimicReward)}
           onToggleMute={handleToggleMute}
+          onChangeSpeed={handleChangeSpeed}
           onOpenMenu={handleOpenMenu}
           onUseSkill={handleUseSkill}
           onUsePotion={handleUsePotion}
@@ -258,6 +322,15 @@ export default function App() {
             setLevelUpState(null);
             engineRef.current?.applyLevelUpPerk(perk);
           }}
+        />
+      )}
+
+      {/* Mimic Reward Modal */}
+      {mimicReward && (
+        <MimicRewardModal
+          summary={mimicReward}
+          onEquipAndContinue={(itemId) => closeMimicModalAndResume(itemId)}
+          onContinue={() => closeMimicModalAndResume()}
         />
       )}
 
@@ -297,6 +370,30 @@ export default function App() {
             pushToast("エンドレスモード突入！101日目以降へ");
           }}
         />
+      )}
+
+      {/* Achievement Unlock Celebration Banner */}
+      {achBanner && (
+        <div className="fixed bottom-20 sm:bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none w-[min(380px,92vw)]">
+          <div className="df-panel px-4 py-2.5 rounded-xl border-2 border-[#facc15] shadow-[0_0_24px_rgba(250,204,21,0.4)] flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-amber-500/20 border border-[#facc15] flex items-center justify-center shrink-0">
+              <Trophy className="w-5 h-5 text-amber-300" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="text-[10px] font-display font-extrabold text-amber-300 tracking-widest">
+                ACHIEVEMENT UNLOCKED
+              </div>
+              <div className="text-xs sm:text-sm font-extrabold text-slate-100 truncate">
+                {achBanner.name}
+                {achBanner.rewardCoins > 0 && (
+                  <span className="ml-2 text-amber-300 font-mono-num">
+                    +{achBanner.rewardCoins.toLocaleString()}G
+                  </span>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Toast Notifications */}

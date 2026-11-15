@@ -547,6 +547,24 @@ function drawPlayerSprite(ctx: CanvasRenderingContext2D, p: PlayerState, elapsed
     drawHeroShield(ctx, p, drawX, drawY, elapsed);
     drawHeroWeapon(ctx, p, drawX, drawY, elapsed);
 
+    // Player poison / slow status rings
+    if (p.poisonTimer > 0) {
+      ctx.strokeStyle = "rgba(132, 204, 22, 0.78)";
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(drawX, drawY - 4, 22 + Math.sin(elapsed * 9) * 2, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+    if (p.slowTimer > 0) {
+      ctx.strokeStyle = "rgba(56, 189, 248, 0.78)";
+      ctx.lineWidth = 2;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(drawX, drawY - 4, 25, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+    }
+
     // Orbiting pixel sparkles for Epic / Legendary weapons
     if (p.weaponRarity === "エピック" || p.weaponRarity === "レジェンダリー") {
       const orbCount = p.weaponRarity === "レジェンダリー" ? 3 : 2;
@@ -608,11 +626,29 @@ function drawCompanionSprite(ctx: CanvasRenderingContext2D, c: CompanionEntity, 
   drawSmallHpBar(ctx, c.x, c.y - 32, 32, c.hp / c.maxHp, "#38bdf8");
 }
 
-function drawMonsterSprite(ctx: CanvasRenderingContext2D, e: EnemyEntity) {
-  const bob = Math.sin(e.bobPhase) * (e.isBoss ? 3.2 : 2.2);
+function drawMonsterSprite(ctx: CanvasRenderingContext2D, e: EnemyEntity, elapsed: number) {
+  const isFloating =
+    e.attackPattern === "phase_dash" ||
+    e.attackPattern === "drain" ||
+    e.attackPattern === "homing_orb" ||
+    e.attackPattern === "swarm" ||
+    e.attackPattern === "dive_bomb" ||
+    e.attackPattern === "fire_bolt" ||
+    e.attackPattern === "chain_lightning" ||
+    e.attackPattern === "freeze" ||
+    e.attackPattern === "fire_aoe";
+  const bob = isFloating
+    ? -4 + Math.sin(e.bobPhase * 0.9) * 4.2
+    : Math.sin(e.bobPhase) * (e.isBoss ? 3.2 : 2.2);
+  const tilt =
+    e.dashTimer > 0
+      ? e.facingX * 0.22
+      : isFloating
+        ? Math.sin(e.bobPhase * 0.5) * 0.08
+        : Math.sin(e.bobPhase * 0.7) * 0.05;
   const flash = e.hitFlash > 0;
   const r = e.radius;
-  const lunge = e.attackAnimTimer > 0 ? Math.sin((e.attackAnimTimer / 0.2) * Math.PI) * 5 : 0;
+  const lunge = e.attackAnimTimer > 0 ? Math.sin((e.attackAnimTimer / 0.22) * Math.PI) * 6 : 0;
   const drawX = e.x + e.facingX * lunge;
   const drawY = e.y + bob;
 
@@ -622,8 +658,21 @@ function drawMonsterSprite(ctx: CanvasRenderingContext2D, e: EnemyEntity) {
   ctx.ellipse(e.x, e.y + r * 0.85, r * 0.98, r * 0.42, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (e.isBoss) {
-    ctx.strokeStyle = e.isFinalBoss ? "rgba(239, 68, 68, 0.55)" : "rgba(249, 115, 22, 0.45)";
+  // Mimic golden aura
+  if (e.isMimic) {
+    const pulse = 0.45 + Math.sin(elapsed * 8) * 0.2;
+    ctx.strokeStyle = `rgba(250, 204, 21, ${pulse})`;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.ellipse(e.x, e.y + r * 0.65, r * 1.32, r * 0.58, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    ctx.fillStyle = "rgba(250, 204, 21, 0.14)";
+    ctx.beginPath();
+    ctx.arc(drawX, drawY - 4, r * 1.45, 0, Math.PI * 2);
+    ctx.fill();
+  } else if (e.isBoss) {
+    ctx.strokeStyle = e.isFinalBoss ? "rgba(239, 68, 68, 0.58)" : "rgba(249, 115, 22, 0.48)";
     ctx.lineWidth = 3;
     ctx.beginPath();
     ctx.ellipse(
@@ -638,46 +687,72 @@ function drawMonsterSprite(ctx: CanvasRenderingContext2D, e: EnemyEntity) {
     ctx.stroke();
   }
 
+  // Telegraph flash / attack charge glow around monster
+  if (e.attackAnimTimer > 0) {
+    ctx.save();
+    ctx.globalAlpha = 0.26;
+    ctx.fillStyle = e.color;
+    ctx.beginPath();
+    ctx.arc(drawX, drawY - r * 0.15, r * 1.28, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+
   const spriteImg = getLoadedSprite(MONSTER_SPRITE_MAP[e.id]);
   if (spriteImg) {
-    const spriteSize = e.isFinalBoss
-      ? Math.round(r * 3.1)
-      : e.isBoss
-        ? Math.round(r * 2.9)
-        : e.id === "elite_brute"
-          ? Math.round(r * 2.8)
-          : e.id === "slime"
-            ? Math.round(r * 2.4)
-            : Math.round(r * 2.9);
+    const scaleMult =
+      e.isFinalBoss
+        ? 3.1
+        : e.isBoss
+          ? 2.95
+          : e.id === "elite_brute" || e.id === "exp_monster_16" || e.id === "exp_monster_24" || e.id === "exp_monster_25"
+            ? 2.85
+            : e.id === "slime" || e.id === "exp_monster_01" || e.id === "exp_monster_02"
+              ? 2.45
+              : e.isMimic
+                ? 2.7
+                : 2.8;
+    const baseSpriteSize = Math.round(r * scaleMult);
+    // Subtle 16-bit walk squash/stretch on non-floating enemies
+    const stretchX = isFloating ? 1 : 1 + Math.sin(e.bobPhase) * 0.04;
+    const stretchY = isFloating ? 1 : 1 - Math.sin(e.bobPhase) * 0.04;
+    const dw = Math.round(baseSpriteSize * stretchX);
+    const dh = Math.round(baseSpriteSize * stretchY);
 
     drawTintedSprite(
       ctx,
       spriteImg,
       drawX,
       drawY - r * 0.18,
-      spriteSize,
-      spriteSize,
+      dw,
+      dh,
       e.facingX,
-      0,
+      tilt,
       flash ? 0.82 : 0
     );
 
-    if (!e.isBoss && e.hp < e.maxHp) {
-      drawSmallHpBar(ctx, e.x, e.y - spriteSize * 0.52, Math.max(28, r * 1.9), e.hp / e.maxHp, "#ef4444");
+    if (e.isMimic) {
+      drawSmallHpBar(ctx, e.x, e.y - dh * 0.56, Math.max(36, r * 2.1), e.hp / e.maxHp, "#facc15");
+      ctx.fillStyle = "#fef08a";
+      ctx.font = "800 10px 'Plus Jakarta Sans', 'Noto Sans JP', sans-serif";
+      ctx.textAlign = "center";
+      ctx.fillText("RARE MIMIC", e.x, e.y - dh * 0.56 - 6);
+    } else if (!e.isStageBoss && e.hp < e.maxHp) {
+      drawSmallHpBar(ctx, e.x, e.y - dh * 0.52, Math.max(28, r * 1.9), e.hp / e.maxHp, "#ef4444");
     }
     return;
   }
 
   // Fallback procedural monster
   ctx.fillStyle = flash ? "#fff" : e.color;
-  ctx.strokeStyle = e.isBoss ? "#fde047" : "#0f172a";
-  ctx.lineWidth = e.isBoss ? 3.5 : 2;
+  ctx.strokeStyle = e.isBoss || e.isMimic ? "#fde047" : "#0f172a";
+  ctx.lineWidth = e.isBoss || e.isMimic ? 3.5 : 2;
   ctx.beginPath();
   ctx.arc(drawX, drawY, r, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  if (!e.isBoss && e.hp < e.maxHp) {
+  if (!e.isStageBoss && e.hp < e.maxHp) {
     drawSmallHpBar(ctx, e.x, e.y - r - 9, r * 2, e.hp / e.maxHp);
   }
 }
@@ -762,15 +837,37 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
   ctx.arc(p.x, p.y, p.range, 0, Math.PI * 2);
   ctx.stroke();
 
-  // Boss Attack Telegraph
+  // Enemy / Boss Attack Telegraphs
   for (const e of state.enemies) {
     if (e.telegraph) {
       const prog = 1 - e.telegraph.timer / e.telegraph.maxTimer;
-      ctx.fillStyle = "rgba(239, 68, 68, 0.24)";
+      const kind = e.telegraph.kind;
+      const fill =
+        kind === "fire"
+          ? "rgba(249, 115, 22, 0.25)"
+          : kind === "ice"
+            ? "rgba(56, 189, 248, 0.25)"
+            : kind === "root"
+              ? "rgba(34, 197, 94, 0.24)"
+              : kind === "burrow" || kind === "mud"
+                ? "rgba(217, 119, 6, 0.26)"
+                : "rgba(239, 68, 68, 0.24)";
+      const stroke =
+        kind === "fire"
+          ? "#fb923c"
+          : kind === "ice"
+            ? "#38bdf8"
+            : kind === "root"
+              ? "#4ade80"
+              : kind === "burrow" || kind === "mud"
+                ? "#f59e0b"
+                : "#f87171";
+
+      ctx.fillStyle = fill;
       ctx.beginPath();
       ctx.arc(e.telegraph.x, e.telegraph.y, e.telegraph.radius, 0, Math.PI * 2);
       ctx.fill();
-      ctx.strokeStyle = "#f87171";
+      ctx.strokeStyle = stroke;
       ctx.lineWidth = 2.5;
       ctx.beginPath();
       ctx.arc(e.telegraph.x, e.telegraph.y, e.telegraph.radius * prog, 0, Math.PI * 2);
@@ -803,7 +900,7 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
     if (e.x < camX - 120 || e.x > camX + width + 120 || e.y < camY - 120 || e.y > camY + height + 120) {
       continue;
     }
-    drawMonsterSprite(ctx, e);
+    drawMonsterSprite(ctx, e, state.elapsedTotal);
   }
 
   // 6. Player Hero
@@ -899,6 +996,55 @@ export function renderWorld(ctx: CanvasRenderingContext2D, width: number, height
       ctx.lineTo(len * 0.85, -3);
       ctx.moveTo(14, 10);
       ctx.lineTo(len * 0.85, 3);
+      ctx.stroke();
+    } else if (s.kind === "lightning_bolt" && s.targetX !== undefined && s.targetY !== undefined) {
+      // Jagged lightning arc from monster to target
+      ctx.globalAlpha = alpha * 0.95;
+      ctx.strokeStyle = "#fef08a";
+      ctx.lineWidth = 3.5;
+      ctx.beginPath();
+      ctx.moveTo(s.x, s.y);
+      const segs = 5;
+      for (let i = 1; i < segs; i++) {
+        const t = i / segs;
+        const jx = s.x + (s.targetX - s.x) * t + (Math.sin(i * 19 + s.life * 40) * 14);
+        const jy = s.y + (s.targetY - s.y) * t + (Math.cos(i * 13 + s.life * 40) * 14);
+        ctx.lineTo(jx, jy);
+      }
+      ctx.lineTo(s.targetX, s.targetY);
+      ctx.stroke();
+
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 1.6;
+      ctx.stroke();
+    } else if (s.kind === "tidal") {
+      // Water tidal ring
+      const r = s.radius * (0.4 + prog * 0.7);
+      ctx.globalAlpha = alpha * 0.75;
+      ctx.strokeStyle = "#38bdf8";
+      ctx.lineWidth = 4;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, r, 0, Math.PI * 2);
+      ctx.stroke();
+    } else if (s.kind === "bite") {
+      // Twin fang bite marks in front of monster
+      ctx.globalAlpha = alpha * 0.95;
+      ctx.translate(s.x + Math.cos(s.angle) * (s.radius * 0.6), s.y + Math.sin(s.angle) * (s.radius * 0.6));
+      ctx.rotate(s.angle);
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.moveTo(-6, -10);
+      ctx.lineTo(10, -3);
+      ctx.moveTo(-6, 10);
+      ctx.lineTo(10, 3);
+      ctx.stroke();
+    } else if (s.kind === "enemy_slash") {
+      ctx.globalAlpha = alpha * 0.85;
+      ctx.strokeStyle = s.color;
+      ctx.lineWidth = 4.5;
+      ctx.beginPath();
+      ctx.arc(s.x, s.y, s.radius, s.angle - s.arc * 0.5, s.angle + s.arc * 0.5);
       ctx.stroke();
     } else if (s.kind === "guard") {
       // Shield guard ripple arc

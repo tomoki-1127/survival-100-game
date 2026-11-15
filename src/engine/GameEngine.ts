@@ -1,22 +1,35 @@
 import { type BgmTrackId, preloadCoreGameAssets } from "../data/assets";
 import { getEquipmentById } from "../data/equipment";
-import { getAreaForDay, MONSTERS_DB } from "../data/monsters";
+import { getAreaForDay, MONSTERS_DB, pickEnemyIdForDay } from "../data/monsters";
 import { COMPANION_CLASSES, LEVEL_UP_PERKS } from "../data/upgrades";
 import { getRarityVisualTheme, getWeaponSkillDef } from "../data/weaponSkills";
 import type {
+  AchievementDef,
   CompanionEntity,
   DeathEffect,
   EnemyEntity,
   FloatingText,
+  GameSpeed,
   GroundProp,
   HudSnapshot,
+  MimicRewardSummary,
   ParticleEffect,
   PerkDef,
   PlayerState,
   ProjectileEntity,
   SlashEffect,
 } from "../types/game";
-import { evaluateAchievements, getBaseHubStats, SaveManager } from "../utils/saveManager";
+import {
+  evaluateAchievements,
+  getBaseHubStats,
+  markMimicSpawned,
+  MIMIC_MONSTER_ID,
+  recordMonsterEncounter,
+  recordMonsterKill,
+  resolveMimicRewardAtomic,
+  SaveManager,
+  shouldSpawnMimicToday,
+} from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
 import { renderWorld } from "./renderer";
 
@@ -29,6 +42,9 @@ export interface EngineCallbacks {
   onLevelUp: (level: number, choices: PerkDef[]) => void;
   onDeath: (summary: { reachedDay: number; bestDay: number; runCoins: number; totalCoins: number }) => void;
   onVictory100: () => void;
+  onMimicSpawn?: (day: number, areaName: string) => void;
+  onMimicReward?: (summary: MimicRewardSummary) => void;
+  onAchievementUnlock?: (ach: AchievementDef) => void;
   onSaveChanged: () => void;
 }
 
@@ -43,6 +59,7 @@ export class GameEngine {
 
   mode: "hub" | "playing" = "hub";
   paused = false;
+  gameSpeed: GameSpeed = 1;
 
   day = 1;
   dayTimer = 0;
@@ -50,6 +67,7 @@ export class GameEngine {
   runCoins = 0;
   spawnTimer = 0;
   bossSpawnedThisDay = false;
+  mimicCheckedThisDay = false;
   skillCooldown = 0;
   skillMaxCd = 7.5;
   potionCharges = 2;
@@ -74,6 +92,7 @@ export class GameEngine {
   private joyY = 0;
   private joyActive = false;
   private inShopMenu = false;
+  private recentSpawnIds: string[] = [];
   private scheduledSwordWaves: Array<{ delay: number; angle: number; waveIdx: number }> = [];
 
   constructor(canvas: HTMLCanvasElement, callbacks: EngineCallbacks) {
@@ -86,6 +105,23 @@ export class GameEngine {
     this.syncBgm();
   }
 
+  setGameSpeed(speed: GameSpeed) {
+    this.gameSpeed = speed;
+    this.emitHud();
+  }
+
+  cycleGameSpeed(): GameSpeed {
+    const next: GameSpeed = this.gameSpeed === 1 ? 2 : this.gameSpeed === 2 ? 3 : 1;
+    this.setGameSpeed(next);
+    return next;
+  }
+
+  resumeAfterMimicReward() {
+    this.paused = false;
+    this.checkLevelUp();
+    this.emitHud();
+  }
+
   setInShopMenu(open: boolean) {
     if (this.inShopMenu === open) return;
     this.inShopMenu = open;
@@ -96,9 +132,9 @@ export class GameEngine {
     if (this.mode === "hub" || this.inShopMenu) {
       return "home_shop";
     }
-    const livingBoss = this.enemies.find((e) => e.isBoss && e.hp > 0);
-    if (livingBoss) {
-      return livingBoss.isFinalBoss ? "final_boss_day100" : "boss";
+    const livingStageBoss = this.enemies.find((e) => e.isStageBoss && e.hp > 0);
+    if (livingStageBoss) {
+      return livingStageBoss.isFinalBoss ? "final_boss_day100" : "boss";
     }
     if (this.day >= 101) {
       return "endless";
@@ -118,9 +154,9 @@ export class GameEngine {
     if (this.rafId !== null) return;
     this.lastTime = performance.now();
     const tick = (now: number) => {
-      const dt = Math.min(0.05, (now - this.lastTime) / 1000);
+      const rawDt = Math.min(0.05, Math.max(0, (now - this.lastTime) / 1000));
       this.lastTime = now;
-      this.update(dt);
+      this.stepSimulation(rawDt);
       this.render();
       this.rafId = requestAnimationFrame(tick);
     };
@@ -131,6 +167,34 @@ export class GameEngine {
     if (this.rafId !== null) {
       cancelAnimationFrame(this.rafId);
       this.rafId = null;
+    }
+  }
+
+  private stepSimulation(rawDt: number) {
+    if (this.mode !== "playing" || this.paused || !this.player) return;
+
+    // Autosave timer & HUD sync run on real wall-clock dt
+    this.lastSaveTick += rawDt;
+    if (this.lastSaveTick >= 5) {
+      this.lastSaveTick = 0;
+      SaveManager.save();
+    }
+
+    // Apply gameSpeed multiplier to gameplay simulation with bounded substeps (prevents tunneling at 2x/3x)
+    const totalSimDt = rawDt * this.gameSpeed;
+    const maxStep = 1 / 60;
+    const steps = Math.max(1, Math.ceil(totalSimDt / maxStep));
+    const stepDt = totalSimDt / steps;
+
+    for (let i = 0; i < steps; i++) {
+      if (this.paused || this.mode !== "playing") break;
+      this.update(stepDt);
+    }
+
+    this.hudSyncTimer += rawDt;
+    if (this.hudSyncTimer >= 0.065) {
+      this.hudSyncTimer = 0;
+      this.emitHud();
     }
   }
 
@@ -185,6 +249,7 @@ export class GameEngine {
     this.runCoins = 0;
     this.spawnTimer = 0.45;
     this.bossSpawnedThisDay = false;
+    this.mimicCheckedThisDay = false;
     this.skillCooldown = 0;
     this.potionCharges = 2;
     this.potionCd = 0;
@@ -195,6 +260,7 @@ export class GameEngine {
     this.particles = [];
     this.deathEffects = [];
     this.floatingTexts = [];
+    this.recentSpawnIds = [];
     this.scheduledSwordWaves = [];
 
     this.player = this.createPlayerObject();
@@ -239,6 +305,10 @@ export class GameEngine {
       skillAnimMax: 0.3,
       dashInvulnTimer: 0,
       guardFlashTimer: 0,
+      poisonTimer: 0,
+      poisonTickTimer: 0,
+      poisonDps: 0,
+      slowTimer: 0,
       weaponId: weapon?.id || "wp_sword_apprentice",
       weaponCategory,
       weaponRarity: weapon?.rarity || "ノーマル",
@@ -378,63 +448,129 @@ export class GameEngine {
     return { hpMult, atkMult, rewardMult, coinMult };
   }
 
-  private spawnEnemy(typeId: string) {
+  private spawnEnemy(
+    typeId: string,
+    options?: {
+      x?: number;
+      y?: number;
+      isSplitChild?: boolean;
+      mimicBlockKey?: string;
+    }
+  ) {
     if (!this.player) return;
     const def = MONSTERS_DB[typeId];
     if (!def) return;
-    if (this.enemies.length >= 110 && !def.isBoss) return;
+    const isMimic = typeId === MIMIC_MONSTER_ID;
+    if (this.enemies.length >= 110 && !def.isBoss && !isMimic) return;
 
     const scale = this.getEnemyScaling(this.day);
     const angle = Math.random() * Math.PI * 2;
-    const dist = Math.max(this.canvas.width, this.canvas.height) * 0.46 + 140;
-    const x = Math.max(40, Math.min(ARENA_SIZE - 40, this.player.x + Math.cos(angle) * dist));
-    const y = Math.max(40, Math.min(ARENA_SIZE - 40, this.player.y + Math.sin(angle) * dist));
+    const dist = isMimic
+      ? Math.min(340, Math.max(this.canvas.width, this.canvas.height) * 0.32 + 90)
+      : Math.max(this.canvas.width, this.canvas.height) * 0.46 + 140;
+    const rawX = options?.x ?? this.player.x + Math.cos(angle) * dist;
+    const rawY = options?.y ?? this.player.y + Math.sin(angle) * dist;
+    const x = Math.max(40, Math.min(ARENA_SIZE - 40, rawX));
+    const y = Math.max(40, Math.min(ARENA_SIZE - 40, rawY));
 
-    const hp = Math.round(def.hp * scale.hpMult * (def.isBoss ? 1 + (this.day / 100) * 0.5 : 1));
-    const atk = Math.round(def.atk * scale.atkMult);
+    const splitFactor = options?.isSplitChild ? 0.36 : 1;
+    const hp = Math.max(
+      12,
+      Math.round(
+        def.hp *
+          scale.hpMult *
+          (def.isStageBoss ? 1 + (this.day / 100) * 0.5 : 1) *
+          splitFactor
+      )
+    );
+    const atk = Math.max(2, Math.round(def.atk * scale.atkMult * (options?.isSplitChild ? 0.72 : 1)));
     const defStat = Math.round(def.def * (1 + (this.day - 1) * 0.04));
+    const radius = options?.isSplitChild ? Math.max(10, Math.round(def.radius * 0.72)) : def.radius;
 
     this.enemies.push({
       id: typeId,
-      name: def.isBoss && this.day !== 100 ? `${this.day}日目の守護者` : def.name,
+      name:
+        def.isStageBoss && this.day !== 100
+          ? `${this.day}日目の守護者`
+          : options?.isSplitChild
+            ? `${def.name}（分裂体）`
+            : def.name,
       isBoss: !!def.isBoss,
+      isStageBoss: !!def.isStageBoss,
       isFinalBoss: typeId === "boss_100",
+      isMimic,
+      mimicBlockKey: options?.mimicBlockKey,
       shoots: !!def.shoots,
+      attackPattern: def.attackPattern,
       x,
       y,
-      radius: def.radius,
+      radius,
       hp,
       maxHp: hp,
       atk,
       def: defStat,
-      speed: def.speed + Math.min(45, this.day * 0.4),
-      xp: Math.round(def.xp * scale.rewardMult),
-      coins: Math.max(1, Math.round(def.coins * scale.coinMult)),
+      speed: def.speed + Math.min(45, this.day * 0.4) + (options?.isSplitChild ? 16 : 0),
+      xp: Math.max(1, Math.round(def.xp * scale.rewardMult * splitFactor)),
+      coins: Math.max(1, Math.round(def.coins * scale.coinMult * splitFactor)),
       color: def.color,
       attackRange: def.attackRange,
       atkCd: def.atkCd,
-      atkTimer: 0.4,
-      specialTimer: 3.0,
+      atkTimer: 0.45,
+      specialTimer: isMimic ? 1.8 : 2.2 + Math.random() * 1.4,
+      dashTimer: 0,
+      dashVx: 0,
+      dashVy: 0,
       telegraph: null,
       hitFlash: 0,
       bobPhase: Math.random() * 6,
       facingX: x >= this.player.x ? -1 : 1,
       attackAnimTimer: 0,
+      isSplitChild: options?.isSplitChild,
     });
 
-    if (def.isBoss) {
+    if (!options?.isSplitChild) {
+      this.recentSpawnIds.push(typeId);
+      if (this.recentSpawnIds.length > 6) this.recentSpawnIds.shift();
+
+      const { isNewDiscovery } = recordMonsterEncounter(typeId, this.day);
+      if (isNewDiscovery) {
+        this.callbacks.onToast(`図鑑登録: ${def.name}`);
+      }
+      this.checkAndNotifyAchievements();
+      this.callbacks.onSaveChanged();
+    }
+
+    if (def.isStageBoss) {
       this.syncBgm();
     }
   }
 
-  private pickEnemyTypeForDay(day: number): string {
-    const pool = ["slime", "slime", "slime"];
-    if (day >= 2) pool.push("goblin", "goblin");
-    if (day >= 4) pool.push("skeleton", "skeleton");
-    if (day >= 6 && Math.random() < Math.min(0.28, 0.08 + day * 0.004)) {
-      return "elite_brute";
+  private tryTriggerMimicForDay() {
+    if (this.mimicCheckedThisDay) return;
+    if (this.day % 10 === 0) {
+      this.mimicCheckedThisDay = true;
+      return;
     }
-    return pool[Math.floor(Math.random() * pool.length)];
+    const { shouldSpawn, blockKey } = shouldSpawnMimicToday(this.day);
+    if (!shouldSpawn) {
+      this.mimicCheckedThisDay = true;
+      return;
+    }
+    if (this.dayTimer < 2.5) return;
+
+    this.mimicCheckedThisDay = true;
+    markMimicSpawned(blockKey);
+    this.spawnEnemy(MIMIC_MONSTER_ID, { mimicBlockKey: blockKey });
+    SoundFX.playMimicAppears();
+    this.screenShake = 0.22;
+    const areaName = getAreaForDay(this.day).name;
+    this.callbacks.onMimicSpawn?.(this.day, areaName);
+    this.callbacks.onToast(`レア遭遇！黄金の「ミミック」が出現した！`);
+  }
+
+  private pickEnemyTypeForDay(day: number): string {
+    const activeBossLikeCount = this.enemies.filter((e) => e.isBoss && !e.isStageBoss && e.hp > 0).length;
+    return pickEnemyIdForDay(day, this.recentSpawnIds, activeBossLikeCount);
   }
 
   private spawnFloatingText(x: number, y: number, text: string, color = "#fff", size = 14) {
@@ -443,7 +579,7 @@ export class GameEngine {
   }
 
   private spawnParticles(x: number, y: number, color: string, count = 6) {
-    if (this.particles.length > 140) return;
+    if (this.particles.length > 160) return;
     for (let i = 0; i < count; i++) {
       const a = Math.random() * Math.PI * 2;
       const spd = 40 + Math.random() * 110;
@@ -473,8 +609,8 @@ export class GameEngine {
     );
 
     if (knockAngle !== null && !enemy.isBoss) {
-      enemy.x += Math.cos(knockAngle) * (knockForce * 0.12);
-      enemy.y += Math.sin(knockAngle) * (knockForce * 0.12);
+      enemy.x = Math.max(32, Math.min(ARENA_SIZE - 32, enemy.x + Math.cos(knockAngle) * (knockForce * 0.12)));
+      enemy.y = Math.max(32, Math.min(ARENA_SIZE - 32, enemy.y + Math.sin(knockAngle) * (knockForce * 0.12)));
     }
 
     if (enemy.hp <= 0) {
@@ -490,7 +626,7 @@ export class GameEngine {
     if (!p) return;
     SoundFX.playKill();
     SoundFX.playCoin();
-    this.spawnParticles(enemy.x, enemy.y, enemy.color, enemy.isBoss ? 26 : 9);
+    this.spawnParticles(enemy.x, enemy.y, enemy.color, enemy.isBoss || enemy.isMimic ? 28 : 9);
     if (this.deathEffects.length < 40) {
       this.deathEffects.push({
         spriteId: enemy.id,
@@ -500,8 +636,8 @@ export class GameEngine {
         radius: enemy.radius,
         facingX: enemy.facingX,
         color: enemy.color,
-        life: enemy.isBoss ? 0.55 : 0.32,
-        maxLife: enemy.isBoss ? 0.55 : 0.32,
+        life: enemy.isBoss ? 0.55 : 0.34,
+        maxLife: enemy.isBoss ? 0.55 : 0.34,
       });
     }
 
@@ -510,23 +646,69 @@ export class GameEngine {
     this.runCoins += gainedCoins;
     SaveManager.data.coins += gainedCoins;
     SaveManager.data.stats.totalKills += 1;
-    SaveManager.data.bestiary[enemy.id] = (SaveManager.data.bestiary[enemy.id] || 0) + 1;
 
     this.spawnFloatingText(enemy.x, enemy.y - 22, `+${gainedCoins}G`, "#fbbf24", 12);
+
+    // Bestiary record + completion check
+    const rewardRes = recordMonsterKill(enemy.id, this.day);
+    if (rewardRes.completedDiscoverReward > 0) {
+      this.callbacks.onToast(
+        `図鑑発見コンプリート報酬 +${rewardRes.completedDiscoverReward.toLocaleString()} G！`
+      );
+    }
+    if (rewardRes.completedDefeatReward > 0) {
+      this.callbacks.onToast(
+        `図鑑全種討伐コンプリート報酬 +${rewardRes.completedDefeatReward.toLocaleString()} G！`
+      );
+    }
+
+    // Split monster ability (exp_monster_01)
+    if (enemy.attackPattern === "split" && !enemy.isSplitChild && this.enemies.length < 104) {
+      for (let i = 0; i < 2; i++) {
+        const ang = (Math.PI * i) + Math.random() * 1.2;
+        this.spawnEnemy(enemy.id, {
+          x: enemy.x + Math.cos(ang) * 26,
+          y: enemy.y + Math.sin(ang) * 26,
+          isSplitChild: true,
+        });
+      }
+      this.spawnFloatingText(enemy.x, enemy.y - 36, "分裂！", "#4ade80", 13);
+    }
 
     if (p.runBonus.lifeOnKill > 0) {
       p.hp = Math.min(p.maxHp, p.hp + p.runBonus.lifeOnKill);
     }
 
     p.xp += enemy.xp;
+
+    // Mimic special defeat reward (atomic per 50-day block)
+    if (enemy.isMimic && enemy.mimicBlockKey) {
+      const mimicReward = resolveMimicRewardAtomic(enemy.mimicBlockKey);
+      if (mimicReward) {
+        if (mimicReward.coinsGained > 0) {
+          this.runCoins += mimicReward.coinsGained;
+        }
+        SoundFX.playMimicVictory();
+        this.spawnParticles(enemy.x, enemy.y, "#facc15", 34);
+        this.paused = true;
+        this.clearKeys();
+        this.checkAndNotifyAchievements();
+        this.callbacks.onSaveChanged();
+        this.emitHud();
+        this.callbacks.onMimicReward?.(mimicReward);
+        return;
+      }
+    }
+
     this.checkLevelUp();
+    this.checkAndNotifyAchievements();
 
     if (enemy.isFinalBoss) {
       SaveManager.data.stats.boss100Defeated = true;
       SaveManager.save();
       this.checkAndNotifyAchievements();
       this.onDayComplete(true);
-    } else if (enemy.isBoss) {
+    } else if (enemy.isStageBoss) {
       SaveManager.save();
       this.onDayComplete(false);
     }
@@ -555,8 +737,12 @@ export class GameEngine {
   }
 
   private checkAndNotifyAchievements() {
-    evaluateAchievements((name) => {
-      this.callbacks.onToast(`実績解除: ${name}`);
+    evaluateAchievements((ach) => {
+      SoundFX.playAchievement();
+      this.callbacks.onAchievementUnlock?.(ach);
+      this.callbacks.onToast(
+        `実績解除: ${ach.name}${ach.rewardCoins > 0 ? ` (+${ach.rewardCoins.toLocaleString()}G)` : ""}`
+      );
     });
   }
 
@@ -725,7 +911,6 @@ export class GameEngine {
     const arc = 2.05;
     const waveAngle = angle + (waveIdx - 1) * 0.16;
 
-    // Slight forward step on each combo slash
     p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x + Math.cos(angle) * 10));
     p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y + Math.sin(angle) * 10));
     p.attackAnimTimer = 0.16;
@@ -1013,12 +1198,37 @@ export class GameEngine {
     SoundFX.playHeal();
     const heal = Math.round(p.maxHp * 0.45);
     p.hp = Math.min(p.maxHp, p.hp + heal);
+    p.poisonTimer = 0;
+    p.slowTimer = 0;
     this.spawnParticles(p.x, p.y, "#4ade80", 12);
     this.spawnFloatingText(p.x, p.y - 26, `+${heal} HP`, "#4ade80", 16);
     this.emitHud();
   }
 
-  private damagePlayer(rawDmg: number) {
+  private applyStatusToPlayer(status?: "poison" | "freeze" | "mud" | "burn") {
+    const p = this.player;
+    if (!p || !status) return;
+    if (status === "poison") {
+      p.poisonTimer = Math.max(p.poisonTimer, 3.2);
+      p.poisonDps = Math.max(p.poisonDps, Math.max(2, Math.round(p.maxHp * 0.025)));
+      this.spawnFloatingText(p.x, p.y - 36, "毒！", "#a3e635", 13);
+    } else if (status === "freeze" || status === "mud") {
+      p.slowTimer = Math.max(p.slowTimer, 2.2);
+      this.spawnFloatingText(
+        p.x,
+        p.y - 36,
+        status === "freeze" ? "凍結減速！" : "泥沼減速！",
+        status === "freeze" ? "#38bdf8" : "#d97706",
+        13
+      );
+    } else if (status === "burn") {
+      p.poisonTimer = Math.max(p.poisonTimer, 2.0);
+      p.poisonDps = Math.max(p.poisonDps, Math.max(3, Math.round(p.maxHp * 0.03)));
+      this.spawnFloatingText(p.x, p.y - 36, "炎上！", "#f97316", 13);
+    }
+  }
+
+  private damagePlayer(rawDmg: number, status?: "poison" | "freeze" | "mud" | "burn") {
     const p = this.player;
     if (!p) return;
     if (p.dashInvulnTimer > 0) return;
@@ -1046,6 +1256,7 @@ export class GameEngine {
       SoundFX.playPlayerHurt();
     }
     this.spawnFloatingText(p.x, p.y - 24, `-${dmg}`, "#ef4444", 15);
+    if (status) this.applyStatusToPlayer(status);
 
     if (p.hp <= 0) {
       p.hp = 0;
@@ -1079,6 +1290,7 @@ export class GameEngine {
     this.day += 1;
     this.dayTimer = 0;
     this.bossSpawnedThisDay = false;
+    this.mimicCheckedThisDay = false;
 
     if (this.day > SaveManager.data.bestDay) {
       SaveManager.data.bestDay = this.day;
@@ -1097,13 +1309,11 @@ export class GameEngine {
       this.callbacks.onToast("回復薬を1つ補充した");
     }
 
-    // 仲間は翌日HP全快で復活
     for (const c of this.companions) {
       c.downed = false;
       c.hp = c.maxHp;
     }
 
-    // 150日目以降 50日ごとの仲間救出イベント
     if (this.day >= 150 && (this.day - 150) % 50 === 0) {
       const classKeys = Object.keys(COMPANION_CLASSES);
       const idx = Math.floor((this.day - 150) / 50) % classKeys.length;
@@ -1137,6 +1347,542 @@ export class GameEngine {
     this.callbacks.onSaveChanged();
   }
 
+  private damageTarget(
+    targetComp: CompanionEntity | null,
+    rawDmg: number,
+    status?: "poison" | "freeze" | "mud" | "burn"
+  ) {
+    if (targetComp) {
+      targetComp.hp -= Math.max(1, Math.round(rawDmg - targetComp.def));
+      targetComp.hitFlash = 0.14;
+      if (targetComp.hp <= 0) {
+        targetComp.hp = 0;
+        targetComp.downed = true;
+        this.callbacks.onToast(`${targetComp.name}が戦闘離脱（翌日復活）`);
+      }
+    } else {
+      this.damagePlayer(rawDmg, status);
+    }
+  }
+
+  private updateEnemyAI(e: EnemyEntity, dt: number, p: PlayerState) {
+    if (e.hitFlash > 0) e.hitFlash -= dt;
+    if (e.attackAnimTimer > 0) e.attackAnimTimer = Math.max(0, e.attackAnimTimer - dt);
+    e.bobPhase += dt * 7;
+
+    // Troll slow natural regeneration
+    if (e.attackPattern === "slow_slam" && e.hp < e.maxHp) {
+      e.hp = Math.min(e.maxHp, e.hp + e.maxHp * 0.008 * dt);
+    }
+
+    let targetObj: { x: number; y: number; radius: number } = p;
+    let targetComp: CompanionEntity | null = null;
+    for (const c of this.companions) {
+      if (!c.downed && c.role === "騎士") {
+        const dC = Math.hypot(c.x - e.x, c.y - e.y);
+        const dP = Math.hypot(p.x - e.x, p.y - e.y);
+        if (dC < dP && dC < 240) {
+          targetObj = { x: c.x, y: c.y, radius: 14 };
+          targetComp = c;
+        }
+      }
+    }
+
+    const dx = targetObj.x - e.x;
+    const dy = targetObj.y - e.y;
+    const dist = Math.hypot(dx, dy) || 1;
+    const nx = dx / dist;
+    const ny = dy / dist;
+    if (Math.abs(nx) > 0.12) {
+      e.facingX = nx >= 0 ? 1 : -1;
+    }
+
+    // Active dash movement (charge, phase_dash, dive_bomb, shadow_combo, shield_charge, ambush)
+    if (e.dashTimer > 0) {
+      e.dashTimer = Math.max(0, e.dashTimer - dt);
+      e.x = Math.max(32, Math.min(ARENA_SIZE - 32, e.x + e.dashVx * dt));
+      e.y = Math.max(32, Math.min(ARENA_SIZE - 32, e.y + e.dashVy * dt));
+      if (Math.random() < 0.45) {
+        this.spawnParticles(e.x, e.y, e.color, 1);
+      }
+    }
+
+    // Telegraph resolution
+    if (e.telegraph) {
+      e.telegraph.timer -= dt;
+      if (e.telegraph.timer <= 0) {
+        const tel = e.telegraph;
+        const td = Math.hypot(p.x - tel.x, p.y - tel.y);
+        const mult = tel.dmgMult ?? 1.35;
+        if (td <= tel.radius + p.radius) {
+          const status =
+            tel.kind === "ice"
+              ? "freeze"
+              : tel.kind === "mud" || tel.kind === "root"
+                ? "mud"
+                : tel.kind === "fire"
+                  ? "burn"
+                  : undefined;
+          this.damagePlayer(e.atk * mult, status);
+          if (tel.slowSec && p) {
+            p.slowTimer = Math.max(p.slowTimer, tel.slowSec);
+          }
+        }
+        if (tel.kind === "burrow") {
+          // Sand Worm surfaces at telegraph center
+          e.x = Math.max(36, Math.min(ARENA_SIZE - 36, tel.x));
+          e.y = Math.max(36, Math.min(ARENA_SIZE - 36, tel.y));
+          e.attackAnimTimer = 0.25;
+        }
+        this.spawnParticles(tel.x, tel.y, e.color, e.isBoss ? 16 : 10);
+        e.telegraph = null;
+      }
+    }
+
+    // Special Ability / Telegraph Triggers
+    e.specialTimer -= dt;
+    if (!e.telegraph && e.specialTimer <= 0) {
+      const ang = Math.atan2(dy, dx);
+      if (e.isStageBoss) {
+        e.specialTimer = e.isFinalBoss ? 2.8 : 3.8;
+        e.attackAnimTimer = 0.3;
+        e.telegraph = { x: p.x, y: p.y, radius: 68, timer: 0.95, maxTimer: 0.95, kind: "aoe", dmgMult: 1.45 };
+        const count = e.isFinalBoss ? 10 : 6;
+        for (let i = 0; i < count; i++) {
+          const a = (Math.PI * 2 * i) / count;
+          this.projectiles.push({
+            fromPlayer: false,
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a) * 210,
+            vy: Math.sin(a) * 210,
+            radius: 7,
+            dmg: e.atk * 0.9,
+            aoe: 0,
+            color: "#f43f5e",
+            life: 2.0,
+            visualKind: "enemy",
+          });
+        }
+      } else if (e.attackPattern === "elite_magic") {
+        e.specialTimer = 3.6;
+        e.telegraph = { x: p.x, y: p.y, radius: 52, timer: 0.9, maxTimer: 0.9, kind: "aoe", dmgMult: 1.35 };
+      } else if (e.attackPattern === "fire_aoe") {
+        e.specialTimer = 3.4;
+        if (dist <= e.attackRange + 80) {
+          e.telegraph = { x: p.x, y: p.y, radius: 56, timer: 0.95, maxTimer: 0.95, kind: "fire", dmgMult: 1.35 };
+        }
+      } else if (e.attackPattern === "curse_magic") {
+        e.specialTimer = 3.8;
+        if (dist <= e.attackRange + 70) {
+          e.telegraph = { x: p.x, y: p.y, radius: 54, timer: 1.0, maxTimer: 1.0, kind: "aoe", dmgMult: 1.3 };
+        }
+      } else if (e.attackPattern === "root_snare") {
+        e.specialTimer = 3.5;
+        if (dist <= e.attackRange + 55) {
+          e.telegraph = { x: p.x, y: p.y, radius: 54, timer: 0.95, maxTimer: 0.95, kind: "root", dmgMult: 1.15, slowSec: 2.2 };
+        }
+      } else if (e.attackPattern === "armor_slam" || e.attackPattern === "slow_slam") {
+        e.specialTimer = 3.4;
+        if (dist <= e.attackRange + 35) {
+          e.telegraph = {
+            x: e.x,
+            y: e.y,
+            radius: e.attackPattern === "armor_slam" ? 72 : 62,
+            timer: 0.85,
+            maxTimer: 0.85,
+            kind: "aoe",
+            dmgMult: 1.4,
+          };
+        }
+      } else if (e.attackPattern === "burrow_breach") {
+        e.specialTimer = 3.8;
+        if (dist <= e.attackRange + 80) {
+          e.telegraph = { x: p.x, y: p.y, radius: 52, timer: 0.9, maxTimer: 0.9, kind: "burrow", dmgMult: 1.45 };
+        }
+      } else if (
+        e.attackPattern === "charge" ||
+        e.attackPattern === "phase_dash" ||
+        e.attackPattern === "dive_bomb" ||
+        e.attackPattern === "shield_charge" ||
+        e.attackPattern === "shadow_combo" ||
+        e.attackPattern === "ambush"
+      ) {
+        e.specialTimer = e.attackPattern === "ambush" ? 2.7 : 3.1;
+        if (dist <= e.attackRange + 60 && dist > e.radius + targetObj.radius + 14) {
+          e.dashTimer = 0.28;
+          const dashSpd = e.speed * (e.attackPattern === "phase_dash" ? 3.2 : 2.6);
+          e.dashVx = Math.cos(ang) * dashSpd;
+          e.dashVy = Math.sin(ang) * dashSpd;
+          e.attackAnimTimer = 0.25;
+          this.spawnParticles(e.x, e.y, e.color, 6);
+        }
+      } else if (e.attackPattern === "multi_element") {
+        e.specialTimer = 3.4;
+        e.telegraph = { x: p.x, y: p.y, radius: 64, timer: 0.9, maxTimer: 0.9, kind: "fire", dmgMult: 1.4 };
+        const elems: Array<{ c: string; v: ProjectileEntity["visualKind"]; st?: ProjectileEntity["statusEffect"] }> = [
+          { c: "#f97316", v: "fire", st: "burn" },
+          { c: "#38bdf8", v: "ice", st: "freeze" },
+          { c: "#facc15", v: "lightning" },
+        ];
+        for (let i = -1; i <= 1; i++) {
+          const el = elems[i + 1];
+          const a = ang + i * 0.24;
+          this.projectiles.push({
+            fromPlayer: false,
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a) * 245,
+            vy: Math.sin(a) * 245,
+            radius: 7,
+            dmg: e.atk * 0.85,
+            aoe: 0,
+            color: el.c,
+            life: 2.0,
+            statusEffect: el.st,
+            visualKind: el.v,
+          });
+        }
+      } else if (e.attackPattern === "fire_breath") {
+        e.specialTimer = 3.2;
+        e.telegraph = { x: p.x, y: p.y, radius: 70, timer: 0.95, maxTimer: 0.95, kind: "fire", dmgMult: 1.5 };
+        for (let i = -2; i <= 2; i++) {
+          const a = ang + i * 0.17;
+          this.projectiles.push({
+            fromPlayer: false,
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a) * 260,
+            vy: Math.sin(a) * 260,
+            radius: 7,
+            dmg: e.atk * 0.8,
+            aoe: 0,
+            color: "#fb923c",
+            life: 1.9,
+            statusEffect: "burn",
+            visualKind: "fire",
+          });
+        }
+      }
+    }
+
+    // Standard movement
+    const stopDist = e.shoots ? e.attackRange * 0.78 : e.radius + targetObj.radius - 2;
+    if (dist > stopDist && e.dashTimer <= 0) {
+      e.x = Math.max(32, Math.min(ARENA_SIZE - 32, e.x + nx * e.speed * dt));
+      e.y = Math.max(32, Math.min(ARENA_SIZE - 32, e.y + ny * e.speed * dt));
+    }
+
+    // Primary attack cooldown
+    e.atkTimer -= dt;
+    if (dist <= e.attackRange + targetObj.radius && e.atkTimer <= 0) {
+      e.atkTimer = e.atkCd;
+      e.attackAnimTimer = 0.22;
+      const aimAng = Math.atan2(dy, dx);
+
+      if (e.shoots && dist > e.radius + targetObj.radius + 14) {
+        this.performEnemyRangedAttack(e, aimAng, nx, ny, targetObj);
+      } else if (dist <= e.radius + targetObj.radius + 18) {
+        this.performEnemyMeleeAttack(e, aimAng, targetComp);
+      }
+    }
+  }
+
+  private performEnemyRangedAttack(
+    e: EnemyEntity,
+    aimAng: number,
+    nx: number,
+    ny: number,
+    targetObj: { x: number; y: number; radius: number }
+  ) {
+    switch (e.attackPattern) {
+      case "poison":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 225,
+          vy: ny * 225,
+          radius: 6,
+          dmg: e.atk * 0.85,
+          aoe: 0,
+          color: "#84cc16",
+          life: 1.6,
+          statusEffect: "poison",
+          visualKind: "poison",
+        });
+        break;
+      case "drain":
+      case "charm_bolt":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 235,
+          vy: ny * 235,
+          radius: 6.5,
+          dmg: e.atk,
+          aoe: 0,
+          color: e.attackPattern === "charm_bolt" ? "#ec4899" : "#93c5fd",
+          life: 1.9,
+          lifesteal: 0.6,
+          sourceEnemy: e,
+          visualKind: "arcane",
+        });
+        break;
+      case "curse_magic":
+      case "homing_orb":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 205,
+          vy: ny * 205,
+          radius: 6.5,
+          dmg: e.atk,
+          aoe: 0,
+          color: e.color,
+          life: 2.3,
+          homing: true,
+          homingTurn: e.attackPattern === "homing_orb" ? 2.5 : 1.7,
+          visualKind: "arcane",
+        });
+        break;
+      case "freeze":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 250,
+          vy: ny * 250,
+          radius: 6.5,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#38bdf8",
+          life: 1.8,
+          statusEffect: "freeze",
+          visualKind: "ice",
+        });
+        break;
+      case "mud_slow":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 220,
+          vy: ny * 220,
+          radius: 7,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#b45309",
+          life: 1.7,
+          statusEffect: "mud",
+          visualKind: "enemy",
+        });
+        break;
+      case "fire_aoe":
+      case "fire_bolt":
+      case "fire_breath":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 270,
+          vy: ny * 270,
+          radius: 6.5,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#f97316",
+          life: 1.75,
+          statusEffect: "burn",
+          visualKind: "fire",
+        });
+        break;
+      case "chain_lightning":
+        this.slashEffects.push({
+          x: e.x,
+          y: e.y,
+          angle: aimAng,
+          arc: 0,
+          radius: 10,
+          color: "#facc15",
+          life: 0.16,
+          maxLife: 0.16,
+          kind: "lightning_bolt",
+          targetX: targetObj.x,
+          targetY: targetObj.y,
+        });
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 330,
+          vy: ny * 330,
+          radius: 5.5,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#facc15",
+          life: 1.4,
+          visualKind: "lightning",
+        });
+        break;
+      case "swarm":
+      case "tidal_surge": {
+        const spread = e.attackPattern === "tidal_surge" ? [-0.26, 0, 0.26] : [-0.22, 0, 0.22];
+        const spd = e.attackPattern === "tidal_surge" ? 245 : 230;
+        if (e.attackPattern === "tidal_surge") {
+          this.slashEffects.push({
+            x: e.x,
+            y: e.y,
+            angle: aimAng,
+            arc: Math.PI * 2,
+            radius: 44,
+            color: "#38bdf8",
+            life: 0.22,
+            maxLife: 0.22,
+            kind: "tidal",
+          });
+        }
+        for (const off of spread) {
+          const a = aimAng + off;
+          this.projectiles.push({
+            fromPlayer: false,
+            x: e.x,
+            y: e.y,
+            vx: Math.cos(a) * spd,
+            vy: Math.sin(a) * spd,
+            radius: 6,
+            dmg: e.atk * 0.78,
+            aoe: 0,
+            color: e.color,
+            life: 1.75,
+            visualKind: e.attackPattern === "tidal_surge" ? "water" : "arcane",
+          });
+        }
+        break;
+      }
+      case "soul_slash":
+        this.slashEffects.push({
+          x: e.x,
+          y: e.y,
+          angle: aimAng,
+          arc: 1.2,
+          radius: 42,
+          color: "#22d3ee",
+          life: 0.2,
+          maxLife: 0.2,
+          kind: "enemy_slash",
+        });
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 290,
+          vy: ny * 290,
+          radius: 8,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#22d3ee",
+          life: 1.7,
+          visualKind: "ice",
+        });
+        break;
+      case "multi_element":
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 255,
+          vy: ny * 255,
+          radius: 7,
+          dmg: e.atk,
+          aoe: 0,
+          color: "#f59e0b",
+          life: 1.85,
+          visualKind: "fire",
+        });
+        break;
+      default:
+        this.projectiles.push({
+          fromPlayer: false,
+          x: e.x,
+          y: e.y,
+          vx: nx * 245,
+          vy: ny * 245,
+          radius: 6,
+          dmg: e.atk,
+          aoe: 0,
+          color: e.color,
+          life: 1.8,
+          visualKind: "enemy",
+        });
+        break;
+    }
+  }
+
+  private performEnemyMeleeAttack(
+    e: EnemyEntity,
+    aimAng: number,
+    targetComp: CompanionEntity | null
+  ) {
+    let dmg = e.atk;
+    let status: "poison" | "freeze" | "mud" | "burn" | undefined;
+
+    if (e.attackPattern === "poison") {
+      status = "poison";
+    } else if (e.attackPattern === "freeze") {
+      status = "freeze";
+    } else if (e.attackPattern === "mud_slow" || e.attackPattern === "root_snare") {
+      status = "mud";
+    } else if (e.attackPattern === "fire_aoe" || e.attackPattern === "fire_bolt" || e.attackPattern === "fire_breath") {
+      status = "burn";
+    } else if (e.attackPattern === "heavy_melee" || e.attackPattern === "slow_slam") {
+      dmg = Math.round(e.atk * 1.18);
+      this.slashEffects.push({
+        x: e.x,
+        y: e.y,
+        angle: aimAng,
+        arc: 1.5,
+        radius: e.radius + 22,
+        color: e.color,
+        life: 0.18,
+        maxLife: 0.18,
+        kind: "enemy_slash",
+      });
+    } else if (e.attackPattern === "fast_melee" || e.attackPattern === "ambush") {
+      this.slashEffects.push({
+        x: e.x,
+        y: e.y,
+        angle: aimAng,
+        arc: 0.9,
+        radius: e.radius + 16,
+        color: e.attackPattern === "ambush" ? "#facc15" : "#fef08a",
+        life: 0.15,
+        maxLife: 0.15,
+        kind: "bite",
+      });
+    } else if (e.attackPattern === "rapid_combo" || e.attackPattern === "shadow_combo") {
+      dmg = Math.round(e.atk * 1.15);
+      this.slashEffects.push({
+        x: e.x,
+        y: e.y,
+        angle: aimAng,
+        arc: 1.3,
+        radius: e.radius + 20,
+        color: e.attackPattern === "shadow_combo" ? "#a855f7" : "#f87171",
+        life: 0.16,
+        maxLife: 0.16,
+        kind: "enemy_slash",
+      });
+    }
+
+    if (e.attackPattern === "drain" || e.attackPattern === "charm_bolt") {
+      e.hp = Math.min(e.maxHp, e.hp + Math.round(e.maxHp * 0.08));
+    }
+
+    this.damageTarget(targetComp, dmg, status);
+  }
+
   private update(dt: number) {
     if (this.mode !== "playing" || this.paused || !this.player) return;
 
@@ -1150,6 +1896,26 @@ export class GameEngine {
     if (p.skillAnimTimer > 0) p.skillAnimTimer = Math.max(0, p.skillAnimTimer - dt);
     if (p.dashInvulnTimer > 0) p.dashInvulnTimer = Math.max(0, p.dashInvulnTimer - dt);
     if (p.guardFlashTimer > 0) p.guardFlashTimer = Math.max(0, p.guardFlashTimer - dt);
+    if (p.slowTimer > 0) p.slowTimer = Math.max(0, p.slowTimer - dt);
+
+    // Poison / burn DoT debuff
+    if (p.poisonTimer > 0) {
+      p.poisonTimer = Math.max(0, p.poisonTimer - dt);
+      p.poisonTickTimer += dt;
+      if (p.poisonTickTimer >= 0.75) {
+        p.poisonTickTimer -= 0.75;
+        const tickDmg = Math.max(1, Math.round(p.poisonDps * 0.75));
+        p.hp -= tickDmg;
+        this.spawnFloatingText(p.x, p.y - 28, `-${tickDmg}`, "#84cc16", 12);
+        if (p.hp <= 0) {
+          p.hp = 0;
+          this.handlePlayerDeath();
+          return;
+        }
+      }
+    } else {
+      p.poisonTickTimer = 0;
+    }
 
     if (this.scheduledSwordWaves.length > 0) {
       const remaining: typeof this.scheduledSwordWaves = [];
@@ -1164,13 +1930,7 @@ export class GameEngine {
       this.scheduledSwordWaves = remaining;
     }
 
-    this.lastSaveTick += dt;
-    if (this.lastSaveTick >= 5) {
-      this.lastSaveTick = 0;
-      SaveManager.save();
-    }
-
-    // 1. プレイヤー移動
+    // 1. プレイヤー移動（斜め正規化＆境界クランプ）
     let mx = 0;
     let my = 0;
     if (this.keys["KeyW"] || this.keys["ArrowUp"]) my -= 1;
@@ -1186,15 +1946,16 @@ export class GameEngine {
     if (len > 0.01) {
       const nx = mx / Math.max(1, len);
       const ny = my / Math.max(1, len);
-      p.x += nx * p.moveSpeed * dt;
-      p.y += ny * p.moveSpeed * dt;
+      const slowMult = p.slowTimer > 0 ? 0.7 : 1;
+      p.x += nx * p.moveSpeed * slowMult * dt;
+      p.y += ny * p.moveSpeed * slowMult * dt;
       p.x = Math.max(32, Math.min(ARENA_SIZE - 32, p.x));
       p.y = Math.max(32, Math.min(ARENA_SIZE - 32, p.y));
       p.facingAngle = Math.atan2(ny, nx);
       if (Math.abs(nx) > 0.08) {
         p.facingX = nx >= 0 ? 1 : -1;
       }
-      p.walkPhase += dt * 11;
+      p.walkPhase += dt * 11 * slowMult;
     }
 
     // 自動回復
@@ -1226,6 +1987,7 @@ export class GameEngine {
       }
     } else {
       this.dayTimer += dt;
+      this.tryTriggerMimicForDay();
       if (this.dayTimer >= DAY_DURATION) {
         this.onDayComplete(false);
       }
@@ -1235,7 +1997,7 @@ export class GameEngine {
         for (let i = 0; i < batch; i++) {
           this.spawnEnemy(this.pickEnemyTypeForDay(this.day));
         }
-        this.spawnTimer = Math.max(0.55, 1.85 - this.day * 0.025);
+        this.spawnTimer = Math.max(0.58, 1.85 - this.day * 0.025);
       }
     }
 
@@ -1250,8 +2012,8 @@ export class GameEngine {
         const distP = Math.hypot(p.x - c.x, p.y - c.y);
         if (distP > 75) {
           const a = Math.atan2(p.y - c.y, p.x - c.x);
-          c.x += Math.cos(a) * c.speed * dt;
-          c.y += Math.sin(a) * c.speed * dt;
+          c.x = Math.max(32, Math.min(ARENA_SIZE - 32, c.x + Math.cos(a) * c.speed * dt));
+          c.y = Math.max(32, Math.min(ARENA_SIZE - 32, c.y + Math.sin(a) * c.speed * dt));
           if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
         }
         if (c.atkTimer <= 0 && p.hp < p.maxHp) {
@@ -1273,15 +2035,15 @@ export class GameEngine {
         }
         if (target && best > c.range * 0.85) {
           const a = Math.atan2(target.y - c.y, target.x - c.x);
-          c.x += Math.cos(a) * c.speed * dt;
-          c.y += Math.sin(a) * c.speed * dt;
+          c.x = Math.max(32, Math.min(ARENA_SIZE - 32, c.x + Math.cos(a) * c.speed * dt));
+          c.y = Math.max(32, Math.min(ARENA_SIZE - 32, c.y + Math.sin(a) * c.speed * dt));
           if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
         } else if (!target) {
           const distP = Math.hypot(p.x - c.x, p.y - c.y);
           if (distP > 85) {
             const a = Math.atan2(p.y - c.y, p.x - c.x);
-            c.x += Math.cos(a) * c.speed * dt;
-            c.y += Math.sin(a) * c.speed * dt;
+            c.x = Math.max(32, Math.min(ARENA_SIZE - 32, c.x + Math.cos(a) * c.speed * dt));
+            c.y = Math.max(32, Math.min(ARENA_SIZE - 32, c.y + Math.sin(a) * c.speed * dt));
             if (Math.abs(Math.cos(a)) > 0.15) c.facingX = Math.cos(a) >= 0 ? 1 : -1;
           }
         }
@@ -1313,104 +2075,8 @@ export class GameEngine {
     // 4. モンスターAI
     for (const e of this.enemies) {
       if (e.hp <= 0) continue;
-      if (e.hitFlash > 0) e.hitFlash -= dt;
-      if (e.attackAnimTimer > 0) e.attackAnimTimer = Math.max(0, e.attackAnimTimer - dt);
-      e.bobPhase += dt * 7;
-
-      let targetObj: { x: number; y: number; radius: number } = p;
-      let targetComp: CompanionEntity | null = null;
-      for (const c of this.companions) {
-        if (!c.downed && c.role === "騎士") {
-          const dC = Math.hypot(c.x - e.x, c.y - e.y);
-          const dP = Math.hypot(p.x - e.x, p.y - e.y);
-          if (dC < dP && dC < 240) {
-            targetObj = { x: c.x, y: c.y, radius: 14 };
-            targetComp = c;
-          }
-        }
-      }
-
-      const dx = targetObj.x - e.x;
-      const dy = targetObj.y - e.y;
-      const dist = Math.hypot(dx, dy) || 1;
-      const nx = dx / dist;
-      const ny = dy / dist;
-      if (Math.abs(nx) > 0.12) {
-        e.facingX = nx >= 0 ? 1 : -1;
-      }
-
-      if (e.isBoss) {
-        e.specialTimer -= dt;
-        if (e.telegraph) {
-          e.telegraph.timer -= dt;
-          if (e.telegraph.timer <= 0) {
-            const td = Math.hypot(p.x - e.telegraph.x, p.y - e.telegraph.y);
-            if (td <= e.telegraph.radius + p.radius) {
-              this.damagePlayer(e.atk * 1.45);
-            }
-            this.spawnParticles(e.telegraph.x, e.telegraph.y, "#ef4444", 16);
-            e.telegraph = null;
-          }
-        } else if (e.specialTimer <= 0) {
-          e.specialTimer = e.isFinalBoss ? 2.8 : 3.8;
-          e.attackAnimTimer = 0.3;
-          e.telegraph = { x: p.x, y: p.y, radius: 68, timer: 0.95, maxTimer: 0.95 };
-          const count = e.isFinalBoss ? 10 : 6;
-          for (let i = 0; i < count; i++) {
-            const a = (Math.PI * 2 * i) / count;
-            this.projectiles.push({
-              fromPlayer: false,
-              x: e.x,
-              y: e.y,
-              vx: Math.cos(a) * 210,
-              vy: Math.sin(a) * 210,
-              radius: 7,
-              dmg: e.atk * 0.9,
-              aoe: 0,
-              color: "#f43f5e",
-              life: 2.0,
-            });
-          }
-        }
-      }
-
-      const stopDist = e.shoots ? e.attackRange * 0.8 : e.radius + targetObj.radius - 2;
-      if (dist > stopDist) {
-        e.x += nx * e.speed * dt;
-        e.y += ny * e.speed * dt;
-      }
-
-      e.atkTimer -= dt;
-      if (dist <= e.attackRange + targetObj.radius && e.atkTimer <= 0) {
-        e.atkTimer = e.atkCd;
-        e.attackAnimTimer = 0.2;
-        if (e.shoots && dist > e.radius + targetObj.radius + 15) {
-          this.projectiles.push({
-            fromPlayer: false,
-            x: e.x,
-            y: e.y,
-            vx: nx * 240,
-            vy: ny * 240,
-            radius: 6,
-            dmg: e.atk,
-            aoe: 0,
-            color: "#c084fc",
-            life: 1.8,
-          });
-        } else if (dist <= e.radius + targetObj.radius + 14) {
-          if (targetComp) {
-            targetComp.hp -= Math.max(1, Math.round(e.atk - targetComp.def));
-            targetComp.hitFlash = 0.14;
-            if (targetComp.hp <= 0) {
-              targetComp.hp = 0;
-              targetComp.downed = true;
-              this.callbacks.onToast(`${targetComp.name}が戦闘離脱（翌日復活）`);
-            }
-          } else {
-            this.damagePlayer(e.atk);
-          }
-        }
-      }
+      this.updateEnemyAI(e, dt, p);
+      if (this.paused || this.mode !== "playing") return;
     }
 
     // 敵同士の重なり防止
@@ -1429,12 +2095,12 @@ export class GameEngine {
           const px = (dx / d) * push;
           const py = (dy / d) * push;
           if (!a.isBoss) {
-            a.x -= px;
-            a.y -= py;
+            a.x = Math.max(32, Math.min(ARENA_SIZE - 32, a.x - px));
+            a.y = Math.max(32, Math.min(ARENA_SIZE - 32, a.y - py));
           }
           if (!b.isBoss) {
-            b.x += px;
-            b.y += py;
+            b.x = Math.max(32, Math.min(ARENA_SIZE - 32, b.x + px));
+            b.y = Math.max(32, Math.min(ARENA_SIZE - 32, b.y + py));
           }
         }
       }
@@ -1442,6 +2108,17 @@ export class GameEngine {
 
     // 5. 飛び道具
     for (const proj of this.projectiles) {
+      if (proj.homing && !proj.fromPlayer) {
+        const curSpd = Math.hypot(proj.vx, proj.vy) || 200;
+        const curAng = Math.atan2(proj.vy, proj.vx);
+        const targetAng = Math.atan2(p.y - proj.y, p.x - proj.x);
+        const diff = Math.atan2(Math.sin(targetAng - curAng), Math.cos(targetAng - curAng));
+        const maxTurn = (proj.homingTurn ?? 2.0) * dt;
+        const nextAng = curAng + Math.max(-maxTurn, Math.min(maxTurn, diff));
+        proj.vx = Math.cos(nextAng) * curSpd;
+        proj.vy = Math.sin(nextAng) * curSpd;
+      }
+
       proj.x += proj.vx * dt;
       proj.y += proj.vy * dt;
       proj.life -= dt;
@@ -1473,8 +2150,13 @@ export class GameEngine {
         }
       } else {
         if (Math.hypot(p.x - proj.x, p.y - proj.y) <= p.radius + proj.radius) {
-          this.damagePlayer(proj.dmg);
+          this.damagePlayer(proj.dmg, proj.statusEffect);
+          if (proj.lifesteal && proj.sourceEnemy && proj.sourceEnemy.hp > 0) {
+            const heal = Math.max(2, Math.round(proj.dmg * proj.lifesteal));
+            proj.sourceEnemy.hp = Math.min(proj.sourceEnemy.maxHp, proj.sourceEnemy.hp + heal);
+          }
           proj.life = 0;
+          if (this.paused || this.mode !== "playing") return;
         }
       }
     }
@@ -1506,13 +2188,6 @@ export class GameEngine {
     // カメラ追従
     this.camera.x += (p.x - this.camera.x) * Math.min(1, dt * 10);
     this.camera.y += (p.y - this.camera.y) * Math.min(1, dt * 10);
-
-    // HUD同期（約15fpsでReact再描画負荷を抑制）
-    this.hudSyncTimer += dt;
-    if (this.hudSyncTimer >= 0.065) {
-      this.hudSyncTimer = 0;
-      this.emitHud();
-    }
   }
 
   emitHud() {
@@ -1520,7 +2195,8 @@ export class GameEngine {
     const p = this.player;
     const weapon = getEquipmentById(SaveManager.data.equipped.weapon);
     const skillDef = getWeaponSkillDef(p.weaponCategory);
-    const bossEntity = this.enemies.find((e) => e.isBoss && e.hp > 0) || null;
+    const bossEntity = this.enemies.find((e) => e.isStageBoss && e.hp > 0) || null;
+    const mimicActive = this.enemies.some((e) => e.isMimic && e.hp > 0);
     const isBossDay = this.day % 10 === 0;
 
     this.callbacks.onHudUpdate({
@@ -1536,6 +2212,12 @@ export class GameEngine {
       isBossDay,
       areaName: getAreaForDay(this.day).name,
       elapsedTotal: this.elapsedTotal,
+      gameSpeed: this.gameSpeed,
+      mimicActive,
+      playerDebuffs: {
+        poisoned: p.poisonTimer > 0,
+        slowed: p.slowTimer > 0,
+      },
       weaponId: p.weaponId,
       weaponName: weapon?.name || "素手",
       weaponCategory: p.weaponCategory,

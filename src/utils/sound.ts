@@ -601,6 +601,22 @@ class SoundManager {
     this.playBossAppears();
   }
 
+  playMimicAppears() {
+    this.playSfxFile("boss_appears", { volume: 0.78, playbackRate: 1.18 });
+    this.playSfxFile("coin", { volume: 0.65, playbackRate: 1.35, delayMs: 120 });
+  }
+
+  playMimicVictory() {
+    this.playSfxFile("level_up", { volume: 0.85, playbackRate: 1.08 });
+    this.playSfxFile("item_pickup", { volume: 0.9, delayMs: 90 });
+    this.playSfxFile("coin", { volume: 0.85, playbackRate: 1.12, delayMs: 210 });
+  }
+
+  playAchievement() {
+    this.playSfxFile("item_pickup", { volume: 0.8, playbackRate: 1.15 });
+    this.tone(784, 1046, 0.18, "triangle", 0.08);
+  }
+
   playClick() {
     this.tone(600, 480, 0.045, "sine", 0.08);
   }

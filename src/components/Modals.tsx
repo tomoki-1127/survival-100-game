@@ -1,7 +1,11 @@
-import { X } from "lucide-react";
-import type { HudSnapshot, PerkDef, SaveData } from "../types/game";
+import { Coins, Sparkles, X } from "lucide-react";
+import { EQUIPMENT_ICON_MAP, MONSTER_SPRITE_MAP } from "../data/assets";
+import { RARITY_COLOR_CLASS, RARITY_FRAME_CLASS } from "../data/equipment";
+import type { HudSnapshot, MimicRewardSummary, PerkDef, SaveData } from "../types/game";
+import { formatItemStats } from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
 import { AudioSettingsPanel } from "./AudioSettingsPanel";
+import { PixelSprite } from "./PixelSprite";
 import {
   EquipmentLoadoutPanel,
   EquipmentShopPanel,
@@ -314,6 +318,124 @@ export function VictoryEndlessModal({ onContinue }: { onContinue: () => void }) 
           >
             エンドレスモードへ進む
           </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function MimicRewardModal({
+  summary,
+  onEquipAndContinue,
+  onContinue,
+}: {
+  summary: MimicRewardSummary;
+  onEquipAndContinue: (itemId: string) => void;
+  onContinue: () => void;
+}) {
+  const eq = summary.equipment;
+  return (
+    <div className="fixed inset-0 z-40 bg-slate-950/88 backdrop-blur-sm flex items-center justify-center p-4">
+      <div className="df-panel w-full max-w-md rounded-2xl border-2 border-[#facc15] shadow-[0_0_40px_rgba(250,204,21,0.38)] overflow-hidden">
+        <div className="px-5 py-3.5 bg-slate-950/95 border-b border-[#c89b3c]/70 flex items-center justify-between">
+          <h2 className="font-display text-lg font-extrabold text-amber-300 flex items-center gap-2">
+            <Sparkles className="w-5 h-5 text-yellow-300" />
+            ミミック撃破報酬！
+          </h2>
+          <span className="text-[11px] font-mono-num text-amber-200/80">
+            期間 {summary.blockKey}日目
+          </span>
+        </div>
+
+        <div className="p-5 space-y-4 text-center">
+          <div className="mx-auto w-20 h-20 rounded-xl bg-slate-950 border-2 border-[#facc15]/80 flex items-center justify-center shadow-[0_0_20px_rgba(250,204,21,0.28)]">
+            <PixelSprite
+              src={MONSTER_SPRITE_MAP.exp_monster_26}
+              alt="ミミック"
+              className="w-16 h-16"
+              fallbackText="宝"
+            />
+          </div>
+
+          {summary.rewardType === "equipment" && eq ? (
+            <div className="space-y-3">
+              <div className="text-xs font-bold text-yellow-200">
+                黄金の宝箱から未所持の装備を発見した！
+              </div>
+              <div
+                className={`p-3.5 rounded-xl bg-slate-950/90 border text-left flex items-start gap-3 ${RARITY_FRAME_CLASS[eq.rarity]}`}
+              >
+                <div className="w-14 h-14 shrink-0 rounded-lg bg-slate-900 border border-slate-700 flex items-center justify-center p-1">
+                  <PixelSprite
+                    src={EQUIPMENT_ICON_MAP[eq.id]}
+                    alt={eq.name}
+                    className="w-11 h-11"
+                    fallbackText={eq.category[0]}
+                  />
+                </div>
+                <div className="min-w-0 flex-1 space-y-1">
+                  <div className="flex items-baseline justify-between gap-2">
+                    <h3 className={`font-extrabold text-sm truncate ${RARITY_COLOR_CLASS[eq.rarity]}`}>
+                      {eq.name}
+                    </h3>
+                    <span className="text-[11px] text-slate-400 shrink-0">{eq.category}</span>
+                  </div>
+                  <div className={`text-[11px] font-bold ${RARITY_COLOR_CLASS[eq.rarity]}`}>
+                    {eq.rarity}
+                  </div>
+                  <p className="text-xs font-semibold text-emerald-300">
+                    {formatItemStats(eq.stats)}
+                  </p>
+                  <p className="text-xs text-slate-400">{eq.desc}</p>
+                </div>
+              </div>
+
+              <div className="flex flex-col sm:flex-row gap-2.5 pt-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    SoundFX.playItemPickup();
+                    onEquipAndContinue(eq.id);
+                  }}
+                  className="df-gold-btn flex-1 py-2.5 px-4 rounded-lg text-slate-950 font-extrabold text-sm cursor-pointer"
+                >
+                  今すぐ装備して続ける
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    SoundFX.playClick();
+                    onContinue();
+                  }}
+                  className="flex-1 py-2.5 px-4 rounded-lg bg-slate-900 hover:bg-slate-800 text-amber-100 border border-[#8f6b24] font-bold text-sm cursor-pointer"
+                >
+                  受け取って続ける
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <div className="text-xs font-bold text-yellow-200">
+                黄金の宝箱から大量の財宝を手に入れた！
+              </div>
+              <div className="p-4 rounded-xl bg-slate-950/90 border border-[#c89b3c] flex items-center justify-center gap-2.5 font-mono-num">
+                <Coins className="w-7 h-7 text-amber-400" />
+                <span className="text-2xl font-extrabold text-amber-300">
+                  +{summary.coinsGained.toLocaleString()} G
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  SoundFX.playClick();
+                  onContinue();
+                }}
+                className="df-gold-btn w-full py-2.5 px-4 rounded-lg text-slate-950 font-extrabold text-sm cursor-pointer"
+              >
+                財宝を受け取って冒険を続ける
+              </button>
+            </div>
+          )}
         </div>
       </div>
     </div>

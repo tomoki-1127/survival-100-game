@@ -3,7 +3,6 @@ import { useRef, useState } from "react";
 import {
   COMPANION_SPRITE_MAP,
   EQUIPMENT_ICON_MAP,
-  MONSTER_SPRITE_MAP,
 } from "../data/assets";
 import {
   CATEGORY_TO_SLOT,
@@ -14,7 +13,6 @@ import {
   RARITY_FRAME_CLASS,
   SLOT_LABELS,
 } from "../data/equipment";
-import { MONSTERS_DB } from "../data/monsters";
 import { ACHIEVEMENTS_DB, COMPANION_CLASSES, PERM_UPGRADES_DB } from "../data/upgrades";
 import { getWeaponSkillDef } from "../data/weaponSkills";
 import type { EquipCategory, EquipSlot, SaveData } from "../types/game";
@@ -29,6 +27,7 @@ import {
   SaveManager,
 } from "../utils/saveManager";
 import { SoundFX } from "../utils/sound";
+import { MonsterBestiary } from "./MonsterBestiary";
 import { PixelSprite } from "./PixelSprite";
 
 interface PanelProps {
@@ -57,7 +56,10 @@ export function EquipmentShopPanel({ save, onDataChange, onEquipChanged, onToast
         return;
       }
       SoundFX.playPurchase();
-      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      evaluateAchievements((ach) => {
+        SoundFX.playAchievement();
+        onToast(`実績解除: ${ach.name} (+${ach.rewardCoins.toLocaleString()}G)`);
+      });
       onEquipChanged?.();
       onDataChange();
       onToast(`${res.item.name}を購入・装備しました`);
@@ -203,7 +205,10 @@ export function PermanentUpgradePanel({ save, onDataChange, onToast }: PanelProp
         return;
       }
       SoundFX.playPurchase();
-      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      evaluateAchievements((ach) => {
+        SoundFX.playAchievement();
+        onToast(`実績解除: ${ach.name} (+${ach.rewardCoins.toLocaleString()}G)`);
+      });
       onDataChange();
       onToast(`${res.up.name}を Lv.${res.newLevel} に強化しました`);
     } finally {
@@ -449,44 +454,7 @@ export function RecordsBestiaryPanel({
 
       <div>
         <h3 className="text-sm font-bold text-amber-200 mb-2.5">モンスター図鑑</h3>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {Object.values(MONSTERS_DB).map((m) => {
-            const kills = save.bestiary[m.id] || 0;
-            const discovered = kills > 0;
-            return (
-              <div
-                key={m.id}
-                className="df-card p-3.5 rounded-lg border border-slate-700/80 flex items-start gap-3"
-              >
-                <div className="w-14 h-14 shrink-0 rounded-md bg-slate-950 border border-slate-800 flex items-center justify-center p-1">
-                  <PixelSprite
-                    src={MONSTER_SPRITE_MAP[m.id]}
-                    alt={discovered ? m.name : "未発見"}
-                    className={`w-12 h-12 ${discovered ? "" : "brightness-0 opacity-35"}`}
-                    fallbackText="?"
-                  />
-                </div>
-                <div className="min-w-0 flex-1 space-y-1">
-                  <div className="flex items-baseline justify-between gap-2">
-                    <h4
-                      className="font-bold text-sm truncate"
-                      style={{ color: discovered ? m.color : "#64748b" }}
-                    >
-                      {discovered ? m.name : "？？？"}
-                    </h4>
-                    <span className="text-xs text-slate-400 shrink-0">{m.type}</span>
-                  </div>
-                  <div className="text-xs text-slate-300 font-mono-num">
-                    討伐数: {kills.toLocaleString()} · 初出: {m.minDay}日目〜
-                  </div>
-                  <p className="text-xs text-slate-400">
-                    {discovered ? m.desc : "未遭遇のモンスター。冒険を進めて発見しよう。"}
-                  </p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+        <MonsterBestiary save={save} />
       </div>
 
       <div>
@@ -539,7 +507,7 @@ export function RecordsBestiaryPanel({
             return (
               <div
                 key={ach.id}
-                className={`df-card p-3.5 rounded-lg border space-y-1 ${
+                className={`df-card p-3.5 rounded-lg border space-y-1.5 ${
                   done ? "border-[#c89b3c]" : "border-slate-800"
                 }`}
               >
@@ -547,11 +515,16 @@ export function RecordsBestiaryPanel({
                   <h4 className={`font-bold text-sm ${done ? "text-amber-300" : "text-slate-300"}`}>
                     {ach.name}
                   </h4>
-                  <span className={`text-xs ${done ? "text-emerald-400" : "text-slate-500"}`}>
+                  <span className={`text-xs shrink-0 ${done ? "text-emerald-400 font-bold" : "text-slate-500"}`}>
                     {done ? "達成" : "未達成"}
                   </span>
                 </div>
                 <p className="text-xs text-slate-400">{ach.desc}</p>
+                {ach.rewardCoins > 0 && (
+                  <div className="text-[11px] font-mono-num text-amber-300/90 font-semibold">
+                    報酬: +{ach.rewardCoins.toLocaleString()} G {done ? "(獲得済)" : ""}
+                  </div>
+                )}
               </div>
             );
           })}

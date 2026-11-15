@@ -102,7 +102,10 @@ export function HubScreen({
       }
 
       SoundFX.playLevelUp();
-      evaluateAchievements((name) => onToast(`実績解除: ${name}`));
+      evaluateAchievements((ach) => {
+        SoundFX.playAchievement();
+        onToast(`実績解除: ${ach.name} (+${ach.rewardCoins.toLocaleString()}G)`);
+      });
       onDataChange();
       setSecretCelebration(result);
 

@@ -51,7 +51,7 @@ export interface PermUpgradeDef {
 }
 
 export interface AreaDef {
-  id: string;
+  id: AreaId;
   name: string;
   minDay: number;
   bg: string;
@@ -61,12 +61,67 @@ export interface AreaDef {
   propType: "forest" | "cave" | "wasteland" | "abyss";
 }
 
-export type MonsterTier = "通常" | "強敵" | "ボス" | "最終ボス";
+export type MonsterTier = "通常" | "レア" | "強敵" | "ボス" | "最終ボス" | "特殊";
+
+export type MonsterElement =
+  | "無"
+  | "毒"
+  | "炎"
+  | "氷"
+  | "雷"
+  | "闇"
+  | "水"
+  | "土"
+  | "植物"
+  | "魔力"
+  | "複合";
+
+export type MonsterAttackPattern =
+  | "melee"
+  | "split"
+  | "poison"
+  | "ranged"
+  | "heavy_melee"
+  | "fast_melee"
+  | "charge"
+  | "rapid_combo"
+  | "phase_dash"
+  | "drain"
+  | "curse_magic"
+  | "fire_aoe"
+  | "freeze"
+  | "chain_lightning"
+  | "slow_slam"
+  | "mud_slow"
+  | "armor_slam"
+  | "root_snare"
+  | "homing_orb"
+  | "swarm"
+  | "dive_bomb"
+  | "charm_bolt"
+  | "fire_bolt"
+  | "shadow_combo"
+  | "shield_charge"
+  | "soul_slash"
+  | "ambush"
+  | "burrow_breach"
+  | "tidal_surge"
+  | "multi_element"
+  | "fire_breath"
+  | "elite_magic"
+  | "stage_boss"
+  | "final_boss";
+
+export type AreaId = "forest" | "cave" | "wasteland" | "abyss";
 
 export interface MonsterDef {
   id: string;
   name: string;
+  nameEn?: string;
   type: MonsterTier;
+  element: MonsterElement;
+  danger: 1 | 2 | 3 | 4 | 5;
+  areas: AreaId[];
   hp: number;
   atk: number;
   def: number;
@@ -78,10 +133,31 @@ export interface MonsterDef {
   color: string;
   attackRange: number;
   atkCd: number;
+  attackPattern: MonsterAttackPattern;
+  attackMethodDesc: string;
+  specialAbilityDesc: string;
   shoots?: boolean;
   isBoss?: boolean;
+  isStageBoss?: boolean;
   desc: string;
 }
+
+export interface BestiaryRecord {
+  encounters: number;
+  kills: number;
+  lastDay: number;
+  maxDefeatedLevel: number;
+}
+
+export interface MimicState {
+  plannedDayByBlock: Record<string, number>;
+  spawnedBlocks: string[];
+  defeatedBlocks: string[];
+  rewardedBlocks: string[];
+  totalMimicDefeated: number;
+}
+
+export type GameSpeed = 1 | 2 | 3;
 
 export type CompanionRole = "剣士" | "弓使い" | "魔法使い" | "騎士" | "僧侶";
 
@@ -108,6 +184,12 @@ export interface SaveData {
   permUpgrades: Record<PermUpgradeKey, number>;
   bestDay: number;
   bestiary: Record<string, number>;
+  bestiaryRecords: Record<string, BestiaryRecord>;
+  mimicState: MimicState;
+  bestiaryRewardsClaimed: {
+    discoveredAll: boolean;
+    defeatedAll: boolean;
+  };
   achievements: string[];
   unlockedCompanions: string[];
   secretWeaponsUnlocked?: boolean;
@@ -122,6 +204,7 @@ export interface AchievementDef {
   id: string;
   name: string;
   desc: string;
+  rewardCoins: number;
   check: (save: SaveData) => boolean;
 }
 
@@ -144,6 +227,10 @@ export interface PlayerState {
   skillAnimMax: number;
   dashInvulnTimer: number;
   guardFlashTimer: number;
+  poisonTimer: number;
+  poisonTickTimer: number;
+  poisonDps: number;
+  slowTimer: number;
   weaponId: string;
   weaponCategory: EquipCategory;
   weaponRarity: Rarity;
@@ -191,8 +278,12 @@ export interface EnemyEntity {
   id: string;
   name: string;
   isBoss: boolean;
+  isStageBoss: boolean;
   isFinalBoss: boolean;
+  isMimic?: boolean;
+  mimicBlockKey?: string;
   shoots: boolean;
+  attackPattern: MonsterAttackPattern;
   x: number;
   y: number;
   radius: number;
@@ -208,17 +299,24 @@ export interface EnemyEntity {
   atkCd: number;
   atkTimer: number;
   specialTimer: number;
+  dashTimer: number;
+  dashVx: number;
+  dashVy: number;
   telegraph: {
     x: number;
     y: number;
     radius: number;
     timer: number;
     maxTimer: number;
+    kind?: "aoe" | "fire" | "ice" | "lightning" | "mud" | "root" | "burrow" | "charge";
+    dmgMult?: number;
+    slowSec?: number;
   } | null;
   hitFlash: number;
   bobPhase: number;
   facingX: number;
   attackAnimTimer: number;
+  isSplitChild?: boolean;
 }
 
 export interface CompanionEntity extends CompanionDef {
@@ -244,8 +342,23 @@ export interface ProjectileEntity {
   color: string;
   life: number;
   piercing?: boolean;
+  homing?: boolean;
+  homingTurn?: number;
+  lifesteal?: number;
+  sourceEnemy?: EnemyEntity;
+  statusEffect?: "poison" | "freeze" | "mud" | "burn";
   hitTargets?: Set<EnemyEntity>;
-  visualKind?: "arrow" | "pierce_arrow" | "magic" | "enemy";
+  visualKind?:
+    | "arrow"
+    | "pierce_arrow"
+    | "magic"
+    | "enemy"
+    | "poison"
+    | "fire"
+    | "ice"
+    | "lightning"
+    | "arcane"
+    | "water";
 }
 
 export interface SlashEffect {
@@ -257,9 +370,22 @@ export interface SlashEffect {
   color: string;
   life: number;
   maxLife: number;
-  kind?: "slash" | "cleave" | "thrust" | "spin" | "shockwave" | "magic_nova" | "guard";
+  kind?:
+    | "slash"
+    | "cleave"
+    | "thrust"
+    | "spin"
+    | "shockwave"
+    | "magic_nova"
+    | "guard"
+    | "enemy_slash"
+    | "lightning_bolt"
+    | "tidal"
+    | "bite";
   rarity?: Rarity;
   length?: number;
+  targetX?: number;
+  targetY?: number;
 }
 
 export interface ParticleEffect {
@@ -303,6 +429,13 @@ export interface GroundProp {
   seed: number;
 }
 
+export interface MimicRewardSummary {
+  blockKey: string;
+  rewardType: "coins" | "equipment";
+  coinsGained: number;
+  equipment: EquipmentItem | null;
+}
+
 export interface HudSnapshot {
   level: number;
   hp: number;
@@ -316,6 +449,12 @@ export interface HudSnapshot {
   isBossDay: boolean;
   areaName: string;
   elapsedTotal: number;
+  gameSpeed: GameSpeed;
+  mimicActive: boolean;
+  playerDebuffs: {
+    poisoned: boolean;
+    slowed: boolean;
+  };
   weaponId: string;
   weaponName: string;
   weaponCategory: EquipCategory;

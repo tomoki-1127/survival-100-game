@@ -1,8 +1,8 @@
-import { Coins, Menu, Volume2, VolumeX } from "lucide-react";
+import { Coins, FastForward, Menu, Volume2, VolumeX } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EQUIPMENT_ICON_MAP, HERO_PORTRAIT_PATH, SKILL_ICON_MAP } from "../data/assets";
 import { getWeaponSkillDef } from "../data/weaponSkills";
-import type { HudSnapshot } from "../types/game";
+import type { GameSpeed, HudSnapshot } from "../types/game";
 import { PixelSprite } from "./PixelSprite";
 
 interface GameHudProps {
@@ -10,6 +10,7 @@ interface GameHudProps {
   muted: boolean;
   paused?: boolean;
   onToggleMute: () => void;
+  onChangeSpeed: (speed: GameSpeed) => void;
   onOpenMenu: (tab?: "stats" | "equip" | "shop" | "bestiary" | "system") => void;
   onUseSkill: () => void;
   onUsePotion: () => void;
@@ -28,6 +29,7 @@ export function GameHud({
   muted,
   paused = false,
   onToggleMute,
+  onChangeSpeed,
   onOpenMenu,
   onUseSkill,
   onUsePotion,
@@ -204,6 +206,21 @@ export function GameHud({
                 EXP {hud.xp}/{hud.nextXp}
               </div>
             </div>
+
+            {(hud.playerDebuffs.poisoned || hud.playerDebuffs.slowed) && (
+              <div className="flex items-center gap-1 pt-0.5">
+                {hud.playerDebuffs.poisoned && (
+                  <span className="px-1.5 py-0.2 rounded bg-lime-950/90 border border-lime-500/70 text-[9px] font-bold text-lime-300">
+                    毒
+                  </span>
+                )}
+                {hud.playerDebuffs.slowed && (
+                  <span className="px-1.5 py-0.2 rounded bg-sky-950/90 border border-sky-400/70 text-[9px] font-bold text-sky-300">
+                    減速
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
@@ -270,8 +287,52 @@ export function GameHud({
               メニュー
             </button>
           </div>
+
+          {/* Game Speed Selector (1x / 2x / 3x) */}
+          <div
+            className="w-full flex items-center justify-end gap-1 pt-0.5"
+            role="group"
+            aria-label="ゲーム速度変更"
+          >
+            <FastForward className="w-3 h-3 text-amber-400/90 shrink-0 hidden sm:inline" />
+            {([1, 2, 3] as const).map((spd) => {
+              const active = hud.gameSpeed === spd;
+              return (
+                <button
+                  key={spd}
+                  type="button"
+                  onClick={() => onChangeSpeed(spd)}
+                  aria-pressed={active}
+                  aria-label={`ゲーム速度 ${spd}倍`}
+                  className={`min-w-[34px] min-h-[30px] sm:min-h-[26px] px-2 py-1 rounded text-[11px] font-extrabold font-mono-num border transition-colors cursor-pointer ${
+                    active
+                      ? "bg-amber-400 text-slate-950 border-amber-200 shadow-[0_0_10px_rgba(251,191,36,0.45)]"
+                      : "bg-slate-950/90 text-slate-300 border-slate-700 hover:bg-slate-800 hover:text-amber-200"
+                  }`}
+                >
+                  {spd}x
+                </button>
+              );
+            })}
+          </div>
         </div>
       </div>
+
+      {/* Mimic Active Banner */}
+      {hud.mimicActive && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2 px-3.5 py-1 rounded-md bg-amber-950/92 border border-[#facc15] shadow-[0_0_18px_rgba(250,204,21,0.45)] text-center pointer-events-none"
+          style={{
+            top: hud.boss
+              ? "calc(max(0.5rem, env(safe-area-inset-top)) + 148px)"
+              : "calc(max(0.5rem, env(safe-area-inset-top)) + 86px)",
+          }}
+        >
+          <span className="text-[11px] sm:text-xs font-extrabold text-yellow-200 tracking-wide">
+            レアモンスター「ミミック」出現中！撃破で豪華報酬！
+          </span>
+        </div>
+      )}
 
       {/* Boss HP Bar */}
       {hud.boss && (
